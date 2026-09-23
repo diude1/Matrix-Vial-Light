@@ -12,6 +12,9 @@ LED 接口（目前只有 VialRGB 能），AMK 官方固件会明确告知不支
 import tkinter as tk
 from tkinter import colorchooser, messagebox, ttk
 
+import queue
+import threading
+
 from . import colors as C
 from . import effects, kbdef, presets
 from . import theme as T
@@ -73,6 +76,70 @@ def blend(a, b, t):
     )
 
 
+class _AsyncWorker(object):
+    """把耗时的设备操作放到**后台线程**，结果回主线程（审查项 #7）。
+
+    **关键约束**（违反会崩）：
+
+    * 提交的 ``fn()`` 在 worker 线程跑，**只允许碰 ``dev``**（它内部已加
+      I/O 锁，线程安全），**绝不允许碰 Tk 控件**（Tk 不是线程安全的）。
+    * ``on_done(result)`` / ``on_error(exc)`` 在**主线程**跑，可以安全更新 UI。
+    * 每条结果固定回调一次 ``_busy_exit()``，与 ``run()`` 里的 ``_busy_enter()``
+      配对，保证忙碌计数不跑偏。
+    """
+
+    def __init__(self, app):
+        self.app = app
+        self._jobs = queue.Queue()
+        self._results = queue.Queue()
+        self._stop = False
+        self._thread = threading.Thread(target=self._loop, daemon=True,
+                                        name="vial-async-worker")
+        self._thread.start()
+        app.after(30, self._drain)
+
+    def run(self, fn, on_done=None, on_error=None, busy=None):
+        """提交一个后台任务。``busy`` 是可选的忙碌提示文字。"""
+        self.app._busy_enter(busy)
+        self._jobs.put((fn, on_done, on_error))
+
+    def stop(self):
+        self._stop = True
+
+    def _loop(self):
+        while not self._stop:
+            try:
+                fn, on_done, on_error = self._jobs.get(timeout=0.1)
+            except queue.Empty:
+                continue
+            try:
+                result = fn()
+                self._results.put(("ok", result, on_done, on_error))
+            except Exception as exc:
+                self._results.put(("err", exc, on_done, on_error))
+
+    def _drain(self):
+        """主线程：把 worker 的结果派发回去，并收拢忙碌计数。"""
+        try:
+            while True:
+                status, payload, on_done, on_error = self._results.get_nowait()
+                try:
+                    if status == "ok":
+                        if on_done:
+                            on_done(payload)
+                    else:
+                        if on_error:
+                            on_error(payload)
+                        else:
+                            self.app.log("后台操作失败: %s" % payload, "err")
+                finally:
+                    self.app._busy_exit()
+        except queue.Empty:
+            pass
+        if not self._stop:
+            self.app.after(30, self._drain)
+
+
 class App(tk.Tk):
     def __init__(self, selftest=False):
         tk.Tk.__init__(self)
@@ -125,6 +192,11 @@ class App(tk.Tk):
         self._build_header()
         self._build_tabs()
         self._build_footer()
+
+        # 后台 worker：把耗时 HID 操作从主线程挪走（审查项 #7）。
+        # 必须在所有 _build_* 之后创建（_apply_busy 要引用 busy_lbl）。
+        self._busy_n = 0
+        self._async = _AsyncWorker(self)
 
         self.protocol("WM_DELETE_WINDOW", self._on_close)
         if selftest:
@@ -235,6 +307,10 @@ class App(tk.Tk):
                                anchor="w", font=(UI_FONT, 9))
         self.status.pack(side="left")
 
+        self.busy_lbl = tk.Label(inner, text="", bg=SURFACE_TOP, fg=WARN,
+                                 font=(UI_FONT, 8))
+        self.busy_lbl.pack(side="right", padx=(0, 10))
+
         self.hid_lbl = tk.Label(inner, text="", bg=SURFACE_TOP, fg=FG_FAINT,
                                 font=(UI_FONT, 8))
         self.hid_lbl.pack(side="right")
@@ -260,6 +336,36 @@ class App(tk.Tk):
             self.status.configure(text=text[:150], fg=colour)
         except Exception:
             pass
+
+    # ==================================================================
+    # 后台任务忙碌指示（配合 _AsyncWorker）
+    # ==================================================================
+    def _busy_enter(self, text=None):
+        """有一个后台任务开始：计数 +1 并刷新指示。"""
+        self._busy_n = getattr(self, "_busy_n", 0) + 1
+        self._apply_busy(text)
+
+    def _busy_exit(self):
+        """有一个后台任务结束：计数 -1 并刷新指示。"""
+        self._busy_n = max(0, getattr(self, "_busy_n", 0) - 1)
+        self._apply_busy(None)
+
+    def _apply_busy(self, text):
+        """按当前忙碌计数刷新鼠标指针与 footer 提示。"""
+        n = getattr(self, "_busy_n", 0)
+        try:
+            self.configure(cursor="watch" if n > 0 else "")
+        except Exception:
+            pass
+        lbl = getattr(self, "busy_lbl", None)
+        if lbl is not None:
+            try:
+                if n > 0:
+                    lbl.configure(text="◌ %s" % (text or "处理中…"), fg=WARN)
+                else:
+                    lbl.configure(text="", fg=FG_FAINT)
+            except Exception:
+                pass
 
     # ==================================================================
     # 页签骨架
@@ -2847,6 +2953,12 @@ class App(tk.Tk):
             if self._anim_job:
                 self.after_cancel(self._anim_job)
                 self._anim_job = None
+        except Exception:
+            pass
+        try:
+            async_w = getattr(self, "_async", None)
+            if async_w is not None:
+                async_w.stop()
         except Exception:
             pass
         if self.dev is not None:

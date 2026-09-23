@@ -22,6 +22,7 @@
 import json
 import lzma
 import struct
+import threading
 import time
 
 from . import effects
@@ -386,6 +387,16 @@ class VialDevice(object):
         self._amk_leds = None
         self._keycodes = {}
 
+        # ---- I/O 串行化与重试配置 --------------------------------------
+        # 所有底层收发都走 :meth:`_send`，在锁内完成 —— 这样 GUI 可以把
+        # 耗时操作放到后台 worker 线程，而不会与主线程的调用互相穿线
+        # （HID 句柄本身不是线程安全的）。
+        self._io_lock = threading.Lock()
+        # 重试参数（#8 优化点）：见 :meth:`set_io_profile`。
+        self._io_retries = 4
+        self._io_timeout_ms = 500
+        self._io_delay = 0.1
+
         self.via_protocol = None
         self.vial_protocol = None
         self.keyboard_uid = None
@@ -443,28 +454,59 @@ class VialDevice(object):
     # ------------------------------------------------------------------
     # 底层收发
     # ------------------------------------------------------------------
-    def _send(self, payload, retries=4, timeout_ms=500):
+    def set_io_profile(self, fast=None, retries=None, timeout_ms=None, delay=None):
+        """调整底层收发的重试策略（审查项 #8）。
+
+        ``fast=True``   交互式（GUI）档：少重试、短超时，宁可快速报错也不卡 UI。
+        ``fast=False``  可靠档（默认 / CLI）：多重试，宁可慢一点也要打通命令。
+        也可单独覆盖 ``retries`` / ``timeout_ms`` / ``delay``。
+
+        最坏阻塞时长 ≈ ``retries × (timeout_ms/1000 + delay)``：
+        可靠档 ≈ 4×(0.5+0.1)=2.4s；交互档 ≈ 2×(0.25+0.03)=0.56s。
+        """
+        if fast is not None:
+            if fast:
+                self._io_retries, self._io_timeout_ms, self._io_delay = 2, 250, 0.03
+            else:
+                self._io_retries, self._io_timeout_ms, self._io_delay = 4, 500, 0.1
+        if retries is not None:
+            self._io_retries = max(1, int(retries))
+        if timeout_ms is not None:
+            self._io_timeout_ms = max(20, int(timeout_ms))
+        if delay is not None:
+            self._io_delay = max(0.0, float(delay))
+
+    def _send(self, payload, retries=None, timeout_ms=None):
+        """发 32 字节报文并等响应；整条在 ``_io_lock`` 内完成，保证线程安全。
+
+        重试策略默认取 :meth:`set_io_profile` 的当前配置；
+        也可用 ``retries`` / ``timeout_ms`` 临时覆盖（保持旧签名兼容）。
+        """
         if self._dev is None:
             raise VialError("设备未打开")
         payload = bytes(payload)
         if len(payload) > MSG_LEN:
             raise VialError("报文不能超过 %d 字节" % MSG_LEN)
         buf = payload + b"\x00" * (MSG_LEN - len(payload))
+        tries = self._io_retries if retries is None else int(retries)
+        timeout = self._io_timeout_ms if timeout_ms is None else int(timeout_ms)
+        delay = self._io_delay
         last = None
-        for attempt in range(retries):
-            try:
-                n = self._dev.write(b"\x00" + buf)
-                if n != MSG_LEN + 1:
-                    last = "写入长度异常: %r" % (n,)
-                    time.sleep(0.1)
-                    continue
-                data = self._dev.read(MSG_LEN, timeout_ms=timeout_ms)
-                if data:
-                    return bytes(data)
-                last = "响应为空"
-            except OSError as exc:
-                last = repr(exc)
-            time.sleep(0.1)
+        with self._io_lock:
+            for attempt in range(tries):
+                try:
+                    n = self._dev.write(b"\x00" + buf)
+                    if n != MSG_LEN + 1:
+                        last = "写入长度异常: %r" % (n,)
+                        time.sleep(delay)
+                        continue
+                    data = self._dev.read(MSG_LEN, timeout_ms=timeout)
+                    if data:
+                        return bytes(data)
+                    last = "响应为空"
+                except OSError as exc:
+                    last = repr(exc)
+                time.sleep(delay)
         raise VialError("与键盘通信失败: %s" % last)
 
     # ------------------------------------------------------------------
