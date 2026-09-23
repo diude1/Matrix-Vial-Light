@@ -1,0 +1,9 @@
+# 可选依赖。
+#
+# 本程序在 Windows 上 **不需要任何第三方依赖**：没有 hidapi 时会自动使用
+# 内置的 ctypes 版 HID 后端（直接调 SetupAPI / hid.dll）。
+# 装上 hidapi 只是让底层换成官方库，行为更标准：
+#
+#     pip install hidapi
+#
+hidapi>=0.14 ; platform_system == "Windows"

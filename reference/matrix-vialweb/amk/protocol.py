@@ -1,0 +1,1759 @@
+import struct
+
+from keycodes.keycodes import Keycode
+
+from protocol.base_protocol import BaseProtocol
+
+AMK_VERSION = "0.9.11"
+
+AMK_PROTOCOL_PREFIX = 0xFD
+AMK_PROTOCOL_OK = 0xAA
+
+AMK_PROTOCOL_GET_VERSION = 0
+AMK_PROTOCOL_GET_APC = 1
+AMK_PROTOCOL_SET_APC = 2
+AMK_PROTOCOL_GET_RT = 3
+AMK_PROTOCOL_SET_RT = 4
+AMK_PROTOCOL_GET_DKS = 5
+AMK_PROTOCOL_SET_DKS = 6
+AMK_PROTOCOL_GET_POLL_RATE = 7
+AMK_PROTOCOL_SET_POLL_RATE = 8
+AMK_PROTOCOL_GET_DOWN_DEBOUNCE = 9
+AMK_PROTOCOL_SET_DOWN_DEBOUNCE = 10
+AMK_PROTOCOL_GET_UP_DEBOUNCE = 11
+AMK_PROTOCOL_SET_UP_DEBOUNCE = 12
+AMK_PROTOCOL_GET_NKRO = 13
+AMK_PROTOCOL_SET_NKRO = 14
+AMK_PROTOCOL_GET_MS_CONFIG = 15
+AMK_PROTOCOL_SET_MS_CONFIG = 16
+AMK_PROTOCOL_GET_RT_SENS = 17
+AMK_PROTOCOL_SET_RT_SENS = 18
+AMK_PROTOCOL_GET_TOP_SENS = 19
+AMK_PROTOCOL_SET_TOP_SENS = 20
+AMK_PROTOCOL_GET_BTM_SENS = 21
+AMK_PROTOCOL_SET_BTM_SENS = 22
+AMK_PROTOCOL_GET_APC_SENS = 23
+AMK_PROTOCOL_SET_APC_SENS = 24
+AMK_PROTOCOL_GET_NOISE_SENS = 25
+AMK_PROTOCOL_SET_NOISE_SENS = 26
+AMK_PROTOCOL_GET_RGB_STRIP_COUNT = 27
+AMK_PROTOCOL_GET_RGB_STRIP_INFO = 28
+AMK_PROTOCOL_GET_RGB_STRIP_LED = 29
+AMK_PROTOCOL_SET_RGB_STRIP_LED = 30
+AMK_PROTOCOL_GET_RGB_STRIP_MODE = 31
+AMK_PROTOCOL_SET_RGB_STRIP_MODE = 32
+AMK_PROTOCOL_GET_RGB_INDICATOR_LED = 33
+AMK_PROTOCOL_SET_RGB_INDICATOR_LED = 34
+AMK_PROTOCOL_GET_FILE_SYSTEM_INFO = 35
+AMK_PROTOCOL_GET_FILE_INFO = 36
+AMK_PROTOCOL_OPEN_FILE = 37
+AMK_PROTOCOL_WRITE_FILE = 38
+AMK_PROTOCOL_READ_FILE = 39
+AMK_PROTOCOL_CLOSE_FILE = 40
+AMK_PROTOCOL_DELETE_FILE = 41
+AMK_PROTOCOL_DISPLAY_CONTROL = 42
+AMK_PROTOCOL_GET_RGB_MATRIX_INFO = 43
+AMK_PROTOCOL_GET_RGB_MATRIX_ROW_INFO = 44
+AMK_PROTOCOL_GET_RGB_MATRIX_MODE = 45
+AMK_PROTOCOL_SET_RGB_MATRIX_MODE = 46
+AMK_PROTOCOL_GET_RGB_MATRIX_LED = 47
+AMK_PROTOCOL_SET_RGB_MATRIX_LED = 48
+AMK_PROTOCOL_GET_SNAPTAP = 49
+AMK_PROTOCOL_SET_SNAPTAP = 50
+AMK_PROTOCOL_GET_SNAPTAP_COUNT = 51
+AMK_PROTOCOL_GET_SNAPTAP_CONFIG = 52
+AMK_PROTOCOL_SET_SNAPTAP_CONFIG = 53
+AMK_PROTOCOL_GET_DATETIME = 54
+AMK_PROTOCOL_SET_DATETIME = 55
+AMK_PROTOCOL_GET_SWITCHTYPE = 56
+AMK_PROTOCOL_SET_SWITCHTYPE = 57
+AMK_PROTOCOL_GET_AUX_MODE = 58
+AMK_PROTOCOL_SET_AUX_MODE = 59
+AMK_PROTOCOL_GET_RGB_DATA = 60
+AMK_PROTOCOL_GET_RGB_PARAM = 61
+AMK_PROTOCOL_SET_RGB_PARAM = 62
+AMK_PROTOCOL_GET_SWITCH_STATE = 63
+AMK_PROTOCOL_FIRMWARE = 64
+AMK_PROTOCOL_GET_RGB_GRID_COUNT = 65
+AMK_PROTOCOL_GET_RGB_GRID_INFO = 66
+AMK_PROTOCOL_GET_RGB_GRID_MODE = 67
+AMK_PROTOCOL_SET_RGB_GRID_MODE = 68
+AMK_PROTOCOL_GET_RGB_GRID_LED = 69
+AMK_PROTOCOL_SET_RGB_GRID_LED = 70
+AMK_PROTOCOL_GET_GRID_MASK = 71
+AMK_PROTOCOL_SET_GRID_MASK = 72
+AMK_PROTOCOL_ESP32_COMMAND = 73
+AMK_PROTOCOL_ESP32_OPERATION = 74
+
+RGB_LED_NUM_LOCK = 0
+RGB_LED_CAPS_LOCK = 1
+RGB_LED_SCROLL_LOCK = 2
+RGB_LED_COMPOSE = 3
+RGB_LED_KANA = 4
+
+DKS_EVENT_MAX = 4
+DKS_KEY_MAX = 4
+
+RGB_PARAM_COLOR = 0
+RGB_PARAM_HSV = 1
+RGB_PARAM_SPEED = 2
+RGB_PARAM_SYNC = 3
+RGB_PARAM_BRIGHT = 4
+RGB_PARAM_USE_CUSTOM_COLOR = 5
+
+RGB_TYPE_MATRIX = 0
+RGB_TYPE_STRIP  = 1
+RGB_TYPE_INDICATOR  = 2
+RGB_TYPE_GRID = 3
+
+FIRMWARE_INFO = 0
+FIRMWARE_PREPARE = 1
+FIRMWARE_READ = 2
+FIRMWARE_WRITE = 3
+FIRMWARE_FINISH = 4
+FIRMWARE_RESET = 5
+
+ESP32_STATE = 0
+ESP32_GET_SSID = 1
+ESP32_CONNECT = 2
+ESP32_DISCONNECT = 3
+
+ESP32AT_NOT_READY = 0           #esp32at not ready
+ESP32AT_WIFI_NOT_CONNECT = 1     #esp32at ready but wifi not connected
+ESP32AT_WIFI_CONNECTED = 2      #esp32at ready and wifi connected
+
+GRID_TEXT_MAX = 10
+GRID_ENABLE_SHIFT = 0x00
+GRID_ENABLE_MASK = 0x01
+GRID_ROTATION_SHIFT = 0x01
+GRID_ROTATION_MASK = 0x03
+GRID_MODE_SHIFT = 0x03
+GRID_MODE_MASK = 0x0F
+GRID_TYPING_SHIFT = 0x07
+GRID_TYPING_MASK = 0x01
+
+class DksKey:
+    def __init__(self):
+        self.down_events = ([0,0,0,0],[0,0,0,0],[0,0,0,0],[0,0,0,0])
+        self.up_events = ([0,0,0,0],[0,0,0,0],[0,0,0,0],[0,0,0,0])
+        self.keys = ["KC_NO","KC_NO","KC_NO","KC_NO"]
+        self.dirty = False
+
+    def is_dirty(self):
+        return self.dirty
+    
+    def is_valid(self):
+        for k in self.keys:
+            if k != "KC_NO":
+                return True
+        for t in self.down_events:
+            for e in t:
+                if e != 0:
+                    return True
+        for t in self.up_events:
+            for e in t:
+                if e != 0:
+                    return True
+        return False
+    
+    def set_dirty(self, dirty):
+        self.dirty = dirty
+
+    def update_inner_key(self, index, key):
+        if index >= DKS_KEY_MAX:
+            return
+
+        if not Keycode.is_basic(key):
+            return
+
+        if not Keycode.is_mask(self.keys[index]):
+            return
+
+        kc = Keycode.find_outer_keycode(self.keys[index])
+        if kc is None:
+            return
+        
+        keycode = kc.qmk_id.replace("(kc)", "({})".format(key))
+        self.keys[index] = keycode
+        self.dirty = True
+
+        #print("DKS keys: index={}, code={}".format(index, keycode))
+
+    def add_key(self, index, key):
+        if index < DKS_KEY_MAX:
+            if self.keys[index] != key:
+                self.keys[index] = key
+                self.dirty = True
+            return True
+        else:
+            #print("DKS failed to add key: index ={}, key={}".format(index, key))
+            return False
+    
+    def del_key(self, index):
+        if self.keys[index] != "KC_NO":
+            self.keys[index] = "KC_NO"
+            self.dirty = True
+
+    def add_event(self, event, key, down):
+        if event >= DKS_EVENT_MAX:
+            #print("DKS failed to set event: index={}, key={}, down={}".format(event, key, down))
+            return False
+
+        evts = self.down_events if down else self.up_events
+        if evts[event][key] == 0:
+            evts[event][key] = 1
+            self.dirty = True
+        return True
+
+    def del_event(self, event, key, down):
+        if event >= DKS_EVENT_MAX:
+            #print("DKS failed to clear event: index={}, key={}, down={}".format(event, key, down))
+            return False
+
+        evts = self.down_events if down else self.up_events
+        if evts[event][key] == 1:
+            evts[event][key] = 0
+            self.dirty = True
+        return True
+
+    def pack_dks(self):
+        evts = [0,0,0,0]
+        for i in range(DKS_EVENT_MAX):
+            for j in range(4):
+                if self.down_events[i][j] > 0:
+                    evts[i] |= 1 << j
+                if self.up_events[i][j] > 0:
+                    evts[i] |= 1 << (j+4)
+        
+        keys = [0,0,0,0]
+        for i in range(len(self.keys)):
+            keys[i] = Keycode.resolve(self.keys[i])
+        
+        data = struct.pack(">BBBBHHHH", 
+                        evts[0], evts[1], evts[2], evts[3],
+                        keys[0], keys[1], keys[2], keys[3])
+        return data
+    
+    def save(self):
+        dks = {}
+        dks["down"] = self.down_events
+        dks["up"] = self.up_events
+        dks["codes"] = self.keys
+        return dks
+
+    def load(self, dks):
+        for i in range(len(self.down_events)):
+            for j in range(len(self.down_events[i])):
+                self.down_events[i][j] = dks["down"][i][j]
+
+        for i in range(len(self.up_events)):
+            for j in range(len(self.up_events[i])):
+                self.down_events[i][j] = dks["up"][i][j]
+
+        for i in range(len(self.keys)):
+            self.keys[i] = dks["codes"][i]
+
+    def is_same(self, dks):
+        for i in range(len(self.down_events)):
+            for j in range(len(self.down_events[i])):
+                if self.down_events[i][j] != dks["down"][i][j]:
+                    return False
+
+        for i in range(len(self.up_events)):
+            for j in range(len(self.up_events[i])):
+                if self.down_events[i][j] != dks["up"][i][j]:
+                    return False
+
+        for i in range(len(self.keys)):
+            if self.keys[i] != dks["codes"][i]:
+                return False
+
+        return True
+
+    def parse(self, data):
+        #print("Parse DKS")
+        for i in range(4):
+            #print("Event:{:b}".format(data[i]))
+            for j in range(4):
+                if data[i] & (1<<j) > 0:
+                    self.down_events[i][j] = 1
+                else:
+                    self.down_events[i][j] = 0
+
+                if data[i] & (1<<(j+4)) > 0:
+                    self.up_events[i][j] = 1
+                else:
+                    self.up_events[i][j] = 0
+
+        keys = struct.unpack(">HHHH", data[4:13])
+        for i in range(4):
+            self.keys[i] = Keycode.serialize(keys[i])
+            #print("Keys", self.keys[i])
+
+
+    def clear(self):
+        for i in range(len(self.keys)):
+            self.keys[i] = "KC_NO"
+
+        for i in range(DKS_EVENT_MAX):
+            for j in range(4):
+                self.down_events[i][j] = 0
+                self.up_events[i][j] = 0
+
+        self.dirty = True
+    
+    def get_key(self, index):
+        if index < len(self.keys):
+            return self.keys[index]
+
+        return 0
+    
+    def is_event_on(self, event, index, down):
+        if event < DKS_EVENT_MAX:
+            if down:
+                if index < 4:
+                    return self.down_events[event][index] > 0
+            else:
+                if index < 4:
+                    return self.up_events[event][index] > 0
+
+        return False
+
+    def dump(self):
+        return
+        #print("Dump DKSKey")
+        for i in range(4):
+            print("Key({}) is {}".format(i, self.keys[i]))
+
+        for i in range(DKS_EVENT_MAX):
+            for j in range(4):
+                print("Event({}), Down({}) is {:b}".format(i, j, self.down_events[i][j]))
+                print("Event({}), Up({}) is {:b}".format(i, j, self.up_events[i][j]))
+
+class RgbLed:
+    def __init__(self, index, hue, sat, val, param):
+        self.index = index
+        self.hue = hue
+        self.sat = sat
+        self.val = val
+        self.on = 0
+        self.dynamic = 0
+        self.blink = 0
+        self.breath = 0
+        self.speed = 0
+        self.parse_param(param)
+
+    def parse_param(self, param):
+        self.on         = (param >> 0) & 0x01
+        self.dynamic    = (param >> 1) & 0x01
+        self.blink      = (param >> 2) & 0x01
+        self.breath     = (param >> 3) & 0x01
+        self.speed      = (param >> 4) & 0x0F
+
+    def pack_param(self):
+        param = 0
+        if self.on > 0:
+            param = param | (0x01 << 0)
+            
+        if self.dynamic > 0:
+            param = param | (0x01 << 1)
+
+        if self.blink > 0:
+            param = param | (0x01 << 2)
+
+        if self.breath > 0:
+            param = param | (0x01 << 3)
+    
+        param = param | ((self.speed&0x0F) << 4)
+        return param
+
+    def pack(self):
+        param = self.pack_param()
+
+        data = struct.pack("BBBB", self.hue, self.sat, self.val, param)
+        return data
+
+    def set_hue(self, hue):
+        self.hue = hue
+
+    def get_hue(self):
+        return self.hue
+
+    def set_sat(self, sat):
+        self.sat = sat
+
+    def get_sat(self):
+        return self.sat
+
+    def set_val(self, val):
+        self.val = val 
+
+    def get_val(self):
+        return self.val
+    
+    def set_on(self, on):
+        self.on = on
+
+    def get_on(self):
+        return self.on
+
+    def set_dynamic(self, dynamic):
+        self.dynamic = dynamic 
+
+    def get_dynamic(self):
+        return self.dynamic
+
+    def set_blink(self, blink):
+        self.blink = blink 
+
+    def get_blink(self):
+        return self.blink
+
+    def set_breath(self, breath):
+        self.breath = breath
+
+    def get_breath(self):
+        return self.breath
+
+    def set_speed(self, speed):
+        self.speed = speed
+
+    def get_speed(self):
+        return self.speed
+    
+    def dump(self):
+        print("RgbLed: index={}, hue={}, sat={}, val={}, on={}, dynamic={}, blink={}, breath={}, speed={}".format(
+            self.index, self.hue, self.sat, self.val, self.on, self.dynamic, self.blink, self.breath, self.speed
+        ))
+
+class RgbLedStrip:
+    def __init__(self, index, config, start, count):
+        self.index = index
+        self.config = config 
+        self.start = start
+        self.count = count
+        self.leds = [None] * count
+        self.mode = 0
+
+    def set_led(self, index, led):
+        self.leds[index] = led
+    
+    def get_led(self, index):
+        return self.leds[index]
+    
+    def set_index(self, index):
+        self.index = index 
+
+    def get_index(self):
+        return self.index
+
+    def set_config(self, config):
+        self.config = config 
+
+    def get_config(self):
+        return self.config
+
+    def set_start(self, start):
+        self.start = start
+
+    def get_start(self):
+        return self.start
+
+    def set_count(self, count):
+        self.count = count 
+
+    def get_count(self):
+        return self.count
+    
+    def set_mode(self, mode):
+        self.mode = mode
+    
+    def get_mode(self):
+        return self.mode
+
+class RgbIndicator:
+    def __init__(self, index):
+        self.led = None
+        self.index = index
+    
+    def set_led(self, led):
+        self.led = led
+    
+    def get_led(self):
+        return self.led
+
+    def set_index(self, index):
+        self.led = index 
+    
+    def get_index(self):
+        return self.index
+
+class SnaptapKey:
+    def __init__(self, index, first_row=0, first_col=0, second_row=0, second_col=0, mode=0):
+        self.index = index
+        self.first_row = first_row
+        self.first_col = first_col
+        self.second_row = second_row
+        self.second_col = second_col
+        self.mode = mode
+    
+    def get_first_row(self):
+        return self.first_row
+
+    def get_first_col(self):
+        return self.first_col
+
+    def get_second_row(self):
+        return self.second_row
+
+    def get_second_col(self):
+        return self.second_col
+
+    def get_mode(self):
+        return self.mode
+    
+    def get_index(self):
+        return self.index
+
+class RgbColor:
+    def __init__(self, red, green, blue):
+        self.red = red 
+        self.green = green
+        self.blue = blue 
+    
+    def get_red(self):
+        return self.red
+    
+    def get_green(self):
+        return self.green
+
+    def get_blue(self):
+        return self.blue
+
+class SwitchState:
+    def __init__(self, row, col, stroke, on):
+        self.row = row
+        self.col = col
+        self.stroke = stroke
+        self.on = on
+    
+    def get_row(self):
+        return self.row
+    
+    def set_row(self, row):
+        self.row = row
+
+    def get_col(self):
+        return self.col
+
+    def set_col(self, col):
+        self.col = col
+    
+    def get_on(self):
+        return self.on
+    
+    def set_on(self, on):
+        self.on = on
+
+    def get_stroke(self):
+        return self.stroke
+    
+    def set_stroke(self, stroke):
+        self.stroke = stroke
+
+class ProtocolAmk(BaseProtocol):
+    def amk_protocol_version(self):
+        """ Get the version of AMK protocol """
+        data = self.usb_send(self.dev, struct.pack("BB", AMK_PROTOCOL_PREFIX, AMK_PROTOCOL_GET_VERSION), retries=20)
+        #print("AMK protocol:", data[2])
+        return data[2]
+
+    def reload_apc(self, profile):
+        """ Reload APC information from keyboard """
+        for row, col in self.rowcol.keys():
+            data = self.usb_send(self.dev, 
+                                struct.pack("BBBBB", AMK_PROTOCOL_PREFIX, AMK_PROTOCOL_GET_APC, row, col, profile),
+                                retries=20)
+            val = struct.unpack(">H", data[3:5])
+            if self.amk_apcrt_version == 1:
+                self.amk_apc[profile][(row, col)] = val[0] * self.amk_apcrt_scale
+            else:
+                self.amk_apc[profile][(row, col)] = val[0]
+            #print("AMK protocol: APC={}, row={}, col={}, profile={}".format(self.amk_apc[profile][(row,col)], row, col, profile))
+
+    def reload_rt(self, profile):
+        """ Reload RT information from keyboard """
+        for row, col in self.rowcol.keys():
+            data = self.usb_send(self.dev, 
+                                struct.pack("BBBBB", AMK_PROTOCOL_PREFIX, AMK_PROTOCOL_GET_RT, row, col, profile),
+                                retries=20)
+            val = struct.unpack(">H", data[3:5])[0]
+            rt = {}
+            if self.amk_apcrt_version == 1:
+                cont = True if val & 0x8000 > 0 else False
+                down = (val >> 6) & 0x3F
+                up = val & 0x003F
+                rt["cont"] = cont
+                rt["down"] = down * self.amk_apcrt_scale
+                rt["up"] = up * self.amk_apcrt_scale
+            else:
+                cont = True if val & 0x8000 > 0 else False
+                down = (val >> 7) & 0x007F
+                up = val & 0x007F
+                rt["cont"] = cont
+                rt["down"] = down
+                rt["up"] = up
+
+            self.amk_rt[profile][(row, col)] = rt
+            #print("AMK protocol: RT={}, row={}, col={}, profile={}".format(self.amk_rt[profile][(row, col)], row, col, profile))
+
+    def dump_apcrt(self):
+        for i in range(self.amk_profile_count):
+            for row, col in self.rowcol.keys():
+                print("DUMP APCRT: apc={}, rt={}, row={}, col={}, profile={}".format(self.amk_apc[i][(row,col)],
+                                                                                     self.amk_rt[i][(row,col)],
+                                                                                     row,col,i))
+
+
+    def reload_dks(self):
+        """ Reload DKS information from keyboard """
+        for row, col in self.rowcol.keys():
+            data = self.usb_send(self.dev, 
+                                struct.pack("BBBB", AMK_PROTOCOL_PREFIX, AMK_PROTOCOL_GET_DKS, row, col),
+                                retries=20)
+            dks_data = data[3:15]
+            dks = DksKey()
+            dks.parse(dks_data)
+            self.amk_dks[(row, col)] = dks 
+            #print("AMK protocol: DKS={}, row={}, col={}".format(dks.pack_dks(), row, col))
+    
+    def reload_poll_rate(self):
+        """ Reload Poll Rate information from keyboard """
+        # poll rate
+        data = self.usb_send(self.dev, struct.pack("BB", AMK_PROTOCOL_PREFIX, AMK_PROTOCOL_GET_POLL_RATE))
+        self.amk_poll_rate = data[3]
+        #print("AMK protocol: poll rate={}, result={}".format(self.amk_poll_rate, data[2]))
+
+    def reload_debounce(self):
+        """ Reload Debounce information from keyboard """
+        # down debounce
+        data = self.usb_send(self.dev, struct.pack("BB", AMK_PROTOCOL_PREFIX, AMK_PROTOCOL_GET_DOWN_DEBOUNCE))
+        self.amk_down_debounce = data[3]
+        #print("AMK protocol: down debounce ={}, result={}".format(self.amk_down_debounce, data[2]))
+        # up debounce
+        data = self.usb_send(self.dev, struct.pack("BB", AMK_PROTOCOL_PREFIX, AMK_PROTOCOL_GET_UP_DEBOUNCE))
+        self.amk_up_debounce = data[3]
+        #print("AMK protocol: up debounce ={}, result={}".format(self.amk_up_debounce, data[2]))
+    
+    def reload_nkro(self):
+        """ Reload NKRO information from keyboard """
+        #nkro  
+        data = self.usb_send(self.dev, struct.pack("BB", AMK_PROTOCOL_PREFIX, AMK_PROTOCOL_GET_NKRO))
+        self.amk_nkro = True if data[3] > 0 else False
+        #print("AMK protocol: NKRO={}, result={}".format(self.amk_nkro, data[2]))
+
+    def reload_ms_config(self):
+        """ Reload Magnetic Switch information from keyboard """
+        data = self.usb_send(self.dev, struct.pack("BB", AMK_PROTOCOL_PREFIX, AMK_PROTOCOL_GET_MS_CONFIG))
+        self.amk_pole = True if (data[3] & 0x01) > 0 else False
+        #self.amk_profile = (data[3] & 0x06) >> 1
+        self.keyboard_profile = (data[3] & 0x06) >> 1
+        self.amk_dks_disable = True if (data[3] & 0x08) > 0 else False
+
+    def reload_rt_sensitivity(self):
+        """ Reload RT sensitivity setting from keyboard """
+        data = self.usb_send(self.dev, struct.pack("BB", AMK_PROTOCOL_PREFIX, AMK_PROTOCOL_GET_RT_SENS))
+        if data[2] == AMK_PROTOCOL_OK:
+            self.amk_rt_sens = data[3]
+        #print("AMK protocol: RT sensitivity={}, result={}".format(self.amk_rt_sens, data[2]))
+
+    def reload_top_sensitivity(self):
+        """ Reload TOP sensitivity setting from keyboard """
+        data = self.usb_send(self.dev, struct.pack("BB", AMK_PROTOCOL_PREFIX, AMK_PROTOCOL_GET_TOP_SENS))
+        if data[2] == AMK_PROTOCOL_OK:
+            self.amk_top_sens = data[3]
+        #print("AMK protocol: TOP sensitivity={}, result={}".format(self.amk_top_sens, data[2]))
+
+    def reload_bottom_sensitivity(self):
+        """ Reload BOTTOM sensitivity setting from keyboard """
+        data = self.usb_send(self.dev, struct.pack("BB", AMK_PROTOCOL_PREFIX, AMK_PROTOCOL_GET_BTM_SENS))
+        if data[2] == AMK_PROTOCOL_OK:
+            self.amk_btm_sens = data[3]
+        #print("AMK protocol: BOTTOM sensitivity={}, result={}".format(self.amk_btm_sens, data[2]))
+
+    def reload_apc_sensitivity(self):
+        """ Reload APC sensitivity setting from keyboard """
+        data = self.usb_send(self.dev, struct.pack("BB", AMK_PROTOCOL_PREFIX, AMK_PROTOCOL_GET_APC_SENS))
+        if data[2] == AMK_PROTOCOL_OK:
+            self.amk_apc_sens = data[3]
+        #print("AMK protocol: APC sensitivity={}, result={}".format(self.amk_apc_sens, data[2]))
+
+    def reload_noise_sensitivity(self):
+        """ Reload NOISE sensitivity setting from keyboard """
+        data = self.usb_send(self.dev, struct.pack("BB", AMK_PROTOCOL_PREFIX, AMK_PROTOCOL_GET_NOISE_SENS))
+        if data[2] == AMK_PROTOCOL_OK:
+            self.amk_noise_sens = data[3]
+        #print("AMK protocol: NOISE sensitivity={}, result={}".format(self.amk_noise_sens, data[2]))
+
+    def apply_dks(self, row, col, dks=None):
+        if dks is not None:
+            if self.amk_dks[(row, col)].is_same(dks):
+                return
+            self.amk_dks[(row,col)].load(dks)
+
+        #self.amk_dks[(row,col)].dump()
+        data = struct.pack("BBBB", AMK_PROTOCOL_PREFIX, AMK_PROTOCOL_SET_DKS, row, col) + self.amk_dks[(row,col)].pack_dks()
+        data = self.usb_send(self.dev, data, retries=20)
+
+    def apply_apc(self, row, col, val):
+        if self.amk_apc[self.amk_profile][(row,col)] == val:
+            return
+
+        #print("Update APC at({},{}), old({}), new({})".format(row, col, self.amk_apc[(row,col)], val))
+        self.amk_apc[self.amk_profile][(row,col)] = val
+        if self.amk_apcrt_version == 1:
+            val = val // self.amk_apcrt_scale
+
+        data = struct.pack(">BBBBHB", AMK_PROTOCOL_PREFIX, AMK_PROTOCOL_SET_APC, row, col, val, self.amk_profile)
+        data = self.usb_send(self.dev, data, retries=20)
+
+    def apply_rt(self, row, col, val):
+        if self.amk_rt[self.amk_profile][(row,col)]["cont"] == val["cont"] and \
+            self.amk_rt[self.amk_profile][(row,col)]["down"] == val["down"] and \
+            self.amk_rt[self.amk_profile][(row,col)]["up"] == val["up"]:
+            return
+
+        #print("Update RT at({},{}), old({}), new({})".format(row, col, self.amk_rt[(row,col)], val))
+
+        self.amk_rt[self.amk_profile][(row,col)]["cont"] = val["cont"] 
+        self.amk_rt[self.amk_profile][(row,col)]["down"] = val["down"] 
+        self.amk_rt[self.amk_profile][(row,col)]["up"] = val["up"] 
+        rt = 0x8000 if val["cont"] else 0
+        if self.amk_apcrt_version == 1:
+            rt = rt + (((val["down"]//self.amk_apcrt_scale) & 0x3F) << 6)
+            rt = rt + ((val["up"]//self.amk_apcrt_scale) & 0x3F)
+        else:
+            rt = rt + ((val["down"] & 0x7F) << 7)
+            rt = rt + (val["up"] & 0x7F)
+
+        data = struct.pack(">BBBBHB", AMK_PROTOCOL_PREFIX, AMK_PROTOCOL_SET_RT, row, col, rt, self.amk_profile)
+
+        data = self.usb_send(self.dev, data, retries=20)
+
+    def apply_poll_rate(self, val):
+        if self.amk_poll_rate == val:
+            return
+
+        #print("Update poll rate: old({}), new({})".format(self.amk_poll_rate, val))
+        self.amk_poll_rate = val
+        data = self.usb_send(self.dev, struct.pack("BBB", AMK_PROTOCOL_PREFIX, AMK_PROTOCOL_SET_POLL_RATE, val), retries=20)
+
+    def apply_debounce(self, val, down):
+        if down:
+            if self.amk_down_debounce == val:
+                return 
+
+            #print("Update down debounce: old({}), new({})".format(self.amk_down_debounce, val))
+            self.amk_down_debounce = val
+        else:
+            if self.amk_up_debounce == val:
+                return
+
+            #print("Update up debounce: old({}), new({})".format(self.amk_up_debounce, val))
+            self.amk_up_debounce = val
+
+        cmd = AMK_PROTOCOL_SET_DOWN_DEBOUNCE if down else AMK_PROTOCOL_SET_UP_DEBOUNCE
+        data = self.usb_send(self.dev, struct.pack("BBB", AMK_PROTOCOL_PREFIX, cmd, val), retries=20)
+    
+    def apply_nkro(self, val):
+        if self.amk_nkro == val:
+            return
+
+        #print("Update NKRO : old({}), new({})".format(self.amk_nkro, val))
+        self.amk_nkro = val
+        data = self.usb_send(self.dev, struct.pack("BBB", AMK_PROTOCOL_PREFIX, AMK_PROTOCOL_SET_NKRO, val), retries=20)
+
+    def compose_config(self):
+        config = 1 if self.amk_pole else 0
+        config = config + (self.keyboard_profile*2)
+        config = config + (8 if self.amk_dks_disable else 0)
+        #print("Config is:{}, keyboard_profile is:{} ".format(config, self.keyboard_profile))
+        return config
+
+    def apply_pole(self, val):
+        if self.amk_pole == val:
+            return
+
+        #print("Update POLE: old({}), new({})".format(self.amk_pole, val))
+        self.amk_pole = val
+        config = self.compose_config()
+        data = self.usb_send(self.dev, struct.pack("BBB", AMK_PROTOCOL_PREFIX, AMK_PROTOCOL_SET_MS_CONFIG, config), retries=20)
+
+    def apply_profile(self, val):
+        if self.keyboard_profile == val:
+            return
+
+        #print("Update PROFILE: old({}), new({})".format(self.keyboard_profile, val))
+        self.keyboard_profile = val
+        config = self.compose_config()
+        data = self.usb_send(self.dev, struct.pack("BBB", AMK_PROTOCOL_PREFIX, AMK_PROTOCOL_SET_MS_CONFIG, config), retries=20)
+
+    def apply_dks_disable(self, val):
+        if self.amk_dks_disable == val:
+            return
+
+        #print("Update DKS DISABLE: old({}), new({})".format(self.amk_pole, val))
+        self.amk_dks_disable = val
+        config = self.compose_config()
+        data = self.usb_send(self.dev, struct.pack("BBB", AMK_PROTOCOL_PREFIX, AMK_PROTOCOL_SET_MS_CONFIG, config), retries=20)
+
+    def apply_rt_sensitivity(self, val):
+        if self.amk_rt_sens == val:
+            return
+
+        self.amk_rt_sens = val
+        data = self.usb_send(self.dev, struct.pack("BBB", AMK_PROTOCOL_PREFIX, AMK_PROTOCOL_SET_RT_SENS, val), retries=20)
+        #print("update RT sensitivity: ", val)
+
+    def apply_top_sensitivity(self, val):
+        if self.amk_top_sens == val:
+            return
+
+        self.amk_top_sens = val
+        data = self.usb_send(self.dev, struct.pack("BBB", AMK_PROTOCOL_PREFIX, AMK_PROTOCOL_SET_TOP_SENS, val), retries=20)
+        #print("update TOP sensitivity: ", val)
+
+    def apply_btm_sensitivity(self, val):
+        if self.amk_btm_sens == val:
+            return
+
+        self.amk_btm_sens = val
+        data = self.usb_send(self.dev, struct.pack("BBB", AMK_PROTOCOL_PREFIX, AMK_PROTOCOL_SET_BTM_SENS, val), retries=20)
+        #print("update BOTTOM sensitivity: ", val)
+
+    def apply_apc_sensitivity(self, val):
+        if self.amk_apc_sens == val:
+            return
+
+        self.amk_apc_sens = val
+        data = self.usb_send(self.dev, struct.pack("BBB", AMK_PROTOCOL_PREFIX, AMK_PROTOCOL_SET_APC_SENS, val), retries=20)
+        #print("update APC sensitivity: ", val)
+
+    def apply_noise_sensitivity(self, val):
+        if self.amk_noise_sens == val:
+            return
+
+        self.amk_noise_sens = val
+        data = self.usb_send(self.dev, struct.pack("BBB", AMK_PROTOCOL_PREFIX, AMK_PROTOCOL_SET_NOISE_SENS, val), retries=20)
+        #print("update NOISE sensitivity: ", val)
+
+    def reload_amk_rgb_strip(self):
+        data = self.usb_send(self.dev, struct.pack("BB", AMK_PROTOCOL_PREFIX, AMK_PROTOCOL_GET_RGB_STRIP_COUNT), retries=20)
+        if data[2] == AMK_PROTOCOL_OK:
+            #print("strip count", len(self.amk_rgb_strip["strips"]))
+            #print("strip count loaded", data[3])
+            if len(self.amk_rgb_strip["strips"]) == data[3]:
+                for i in range(data[3]):
+                    data = self.usb_send(self.dev, struct.pack("BBB", AMK_PROTOCOL_PREFIX, AMK_PROTOCOL_GET_RGB_STRIP_INFO,i), retries=20)
+                    if data[2] == AMK_PROTOCOL_OK:
+                        strip = self.amk_rgb_strip["strips"][i]
+                        strip["config"] = data[4]
+                        strip["enabled"] = data[5]
+                        strip["mode"] = data[6]
+                        strip["custom"] = data[7]
+                        strip["use_custom_color"] = False
+                        #print("AMK protocol: get rgb strip: index={}, config={}, enabled={}, mode={}, custom={}".format(data[3], data[4], data[5], data[6], data[7]))
+            for i in range(len(self.amk_rgb_strip["strips"])):
+                strip = self.amk_rgb_strip["strips"][i]
+                for j in range(strip["count"]):
+                    self.reload_rgb_strip_led(self.amk_rgb_strip["start"]+strip["start"]+j)
+
+            #for i in range(self.amk_rgb_strip["count"]):
+            #    self.reload_rgb_strip_led(self.amk_rgb_strip["start"]+i)
+
+    def reload_rgb_strip_led(self, index):
+        if self.amk_rgb_led["protocol_v2"]:
+            data = self.usb_send(self.dev, struct.pack("<BBH", AMK_PROTOCOL_PREFIX, AMK_PROTOCOL_GET_RGB_STRIP_LED,index), retries=20)
+            offset = 5
+        else:
+            data = self.usb_send(self.dev, struct.pack("BBB", AMK_PROTOCOL_PREFIX, AMK_PROTOCOL_GET_RGB_STRIP_LED,index), retries=20)
+            offset = 4
+
+        if data[2] == AMK_PROTOCOL_OK:
+            led = RgbLed(index, data[offset], data[offset+1], data[offset+2], data[offset+3])
+            self.amk_rgb_strip["leds"][index] = led 
+            #print("AMK protocol: get rgb strip led: index={}, hue={},sat={},val={}, param={}".format(data[3], data[4], data[5], data[6],data[7]))
+
+
+    def apply_rgb_strip_led(self, index, led):
+        self.amk_rgb_strip["leds"][index] = led 
+
+        if self.amk_rgb_led["protocol_v2"]:
+            data = self.usb_send(self.dev, struct.pack("<BBH", AMK_PROTOCOL_PREFIX, AMK_PROTOCOL_SET_RGB_STRIP_LED, index) + led.pack(), retries=20)
+        else:
+            data = self.usb_send(self.dev, struct.pack("BBB", AMK_PROTOCOL_PREFIX, AMK_PROTOCOL_SET_RGB_STRIP_LED, index) + led.pack(), retries=20)
+        if data[2] != AMK_PROTOCOL_OK:
+            print("AMK protocol: failed to set rgb strip led: index={}, led={}".format(index, led.pack()))
+        #print("AMK protocol: set rgb strip led: strip={}, index={}, led={}".format(strip, index, led.pack()))
+
+    def apply_rgb_strip_mode(self, strip, mode):
+        if self.amk_rgb_strip["strips"][strip]["mode"] == mode:
+            return
+        
+        self.amk_rgb_strip["strips"][strip]["mode"] = mode
+        data = self.usb_send(self.dev, struct.pack("BBBB", AMK_PROTOCOL_PREFIX, AMK_PROTOCOL_SET_RGB_STRIP_MODE, strip, mode), retries=20)
+        if data[2] != AMK_PROTOCOL_OK:
+            print("AMK protocol: failed to set rgb strip mode: index={}, mode={}".format(strip, mode))
+        #print("AMK protocol: set rgb strip mode: index={}, mode={}".format(strip, mode))
+    
+    def reload_amk_rgb_grid(self):
+        data = self.usb_send(self.dev, struct.pack("BB", AMK_PROTOCOL_PREFIX, AMK_PROTOCOL_GET_RGB_GRID_COUNT), retries=20)
+        if data[2] == AMK_PROTOCOL_OK:
+            if len(self.amk_rgb_grid["grids"]) == data[3]:
+                for i in range(data[3]):
+                    data = self.usb_send(self.dev, struct.pack("BBB", AMK_PROTOCOL_PREFIX, AMK_PROTOCOL_GET_RGB_GRID_INFO,i), retries=20)
+                    if data[2] == AMK_PROTOCOL_OK:
+                        grid = self.amk_rgb_grid["grids"][i]
+                        grid["config"] = data[4]
+                        grid["enabled"] = data[5]
+                        grid["mode"] = data[6]
+                        grid["custom"] = data[7]
+                        grid["row"] = data[8]
+                        grid["col"] = data[9]
+                        if "mask" in grid:
+                            grid["mask_enable"] = 0
+                            grid["mask_text"] = ""
+                            grid["mask_rotation"] = 0
+                            grid["mask_mode"] = 0
+                            if grid["mask"] > 0:
+                                mask = self.reload_grid_mask(i)
+                                if mask is not None:
+                                    grid["mask_enable"] = mask[0]
+                                    grid["mask_text"] = mask[1]
+                                    grid["mask_rotation"] = mask[2]
+                                    grid["mask_mode"] = mask[3]
+                        else:
+                            grid["mask"] = 0
+                        
+                        if "typing" in grid:
+                            grid["has_typing"] = grid["typing"]
+                            if grid["typing"] > 0:
+                                mask = self.reload_grid_mask(i)
+                                if mask is not None:
+                                    grid["typing_enable"] = mask[4]
+                        else:
+                            grid["has_typing"] = 0 
+
+            for i in range(len(self.amk_rgb_grid["grids"])):
+                grid = self.amk_rgb_grid["grids"][i]
+                for j in range(grid["count"]):
+                    self.reload_rgb_grid_led(self.amk_rgb_grid["start"]+grid["start"]+j)
+
+    def reload_rgb_grid_led(self, index):
+        if self.amk_rgb_led["protocol_v2"]:
+            data = self.usb_send(self.dev, struct.pack("<BBH", AMK_PROTOCOL_PREFIX, AMK_PROTOCOL_GET_RGB_GRID_LED,index), retries=20)
+            offset = 5
+        else:
+            data = self.usb_send(self.dev, struct.pack("BBB", AMK_PROTOCOL_PREFIX, AMK_PROTOCOL_GET_RGB_GRID_LED,index), retries=20)
+            offset = 4
+
+        if data[2] == AMK_PROTOCOL_OK:
+            led = RgbLed(index, data[offset], data[offset+1], data[offset+2], data[offset+3])
+            self.amk_rgb_grid["leds"][index] = led 
+            #print("AMK protocol: get rgb grid led: index={}, hue={},sat={},val={}, param={}".format(data[3], data[4], data[5], data[6],data[7]))
+
+
+    def apply_rgb_grid_led(self, index, led):
+        self.amk_rgb_grid["leds"][index] = led 
+
+        if self.amk_rgb_led["protocol_v2"]:
+            data = self.usb_send(self.dev, struct.pack("<BBH", AMK_PROTOCOL_PREFIX, AMK_PROTOCOL_SET_RGB_GRID_LED, index) + led.pack(), retries=20)
+        else:
+            data = self.usb_send(self.dev, struct.pack("BBB", AMK_PROTOCOL_PREFIX, AMK_PROTOCOL_SET_RGB_GRID_LED, index) + led.pack(), retries=20)
+        if data[2] != AMK_PROTOCOL_OK:
+            print("AMK protocol: failed to set rgb grid led: index={}, led={}".format(index, led.pack()))
+        #print("AMK protocol: set rgb grid led: grid ={}, index={}, led={}".format(grid, index, led.pack()))
+
+    def apply_rgb_grid_mode(self, grid, mode):
+        if self.amk_rgb_grid["grids"][grid]["mode"] == mode:
+            return
+        
+        self.amk_rgb_grid["grids"][grid]["mode"] = mode
+        data = self.usb_send(self.dev, struct.pack("BBBB", AMK_PROTOCOL_PREFIX, AMK_PROTOCOL_SET_RGB_GRID_MODE, grid, mode), retries=20)
+        if data[2] != AMK_PROTOCOL_OK:
+            print("AMK protocol: failed to set rgb grid mode: index={}, mode={}".format(grid, mode))
+        #print("AMK protocol: set rgb grid mode: index={}, mode={}".format(grid, mode))
+
+    def reload_amk_rgb_indicators(self):
+        for i in range(len(self.amk_rgb_indicator["indicators"])):
+            self.reload_rgb_indicator(i)
+
+    def reload_rgb_indicator(self, index):
+        if self.amk_rgb_led["protocol_v2"]:
+            data = self.usb_send(self.dev, struct.pack("<BBH", AMK_PROTOCOL_PREFIX, AMK_PROTOCOL_GET_RGB_INDICATOR_LED,index), retries=20)
+            offset = 5
+        else:
+            data = self.usb_send(self.dev, struct.pack("BBB", AMK_PROTOCOL_PREFIX, AMK_PROTOCOL_GET_RGB_INDICATOR_LED,index), retries=20)
+            offset = 4
+
+        if data[2] == AMK_PROTOCOL_OK:
+            led = RgbLed(index, data[offset], data[offset+1], data[offset+2], data[offset+3])
+            self.amk_rgb_indicator["leds"][index] = led 
+        else:
+            print("Failed to get indicator at: ", index)
+
+    def apply_rgb_indicator(self, index, led):
+        self.amk_rgb_indicator["leds"][index] = led 
+
+        #print("Apply rgb indicator led:")
+        #led.dump()
+
+        if self.amk_rgb_led["protocol_v2"]:
+            data = self.usb_send(self.dev, struct.pack("<BBH", AMK_PROTOCOL_PREFIX, AMK_PROTOCOL_SET_RGB_INDICATOR_LED, index) + led.pack(), retries=20)
+        else:
+            data = self.usb_send(self.dev, struct.pack("BBB", AMK_PROTOCOL_PREFIX, AMK_PROTOCOL_SET_RGB_INDICATOR_LED, index) + led.pack(), retries=20)
+
+        if data[2] != AMK_PROTOCOL_OK:
+            print("AMK protocol: failed to set rgb indicator led: index={}, led={}".format(index, led.pack()))
+
+    
+    def reload_anim_file_list(self):
+        data = self.usb_send(self.dev, 
+                             struct.pack("BB", AMK_PROTOCOL_PREFIX, AMK_PROTOCOL_GET_FILE_SYSTEM_INFO), 
+                             retries=20)
+        if data[2] == AMK_PROTOCOL_OK:
+            total_file, free_space, total_space = struct.unpack("<BII", data[3:12])
+            self.animations["disk"] = {"total_file":total_file, "free_space":free_space, "total_space":total_space}
+            self.animations["file"] = []
+            #print("total file: {}, free space: {}, total space: {}".format(total_file, free_space, total_space))
+            for i in range(total_file):
+                data = self.usb_send(self.dev, 
+                                    struct.pack("BBB", AMK_PROTOCOL_PREFIX, AMK_PROTOCOL_GET_FILE_INFO, i), 
+                                    retries=20)
+                if data[2] == AMK_PROTOCOL_OK:
+                    index = 0
+                    for d in range(13):
+                        if data[3+d] == 0:
+                            index = d
+                            break
+                    try:
+                        name = data[3:3+index].decode("utf-8")
+                    except:
+                        name = data[3:3+index].decode("gbk")
+
+                    size, = struct.unpack("<I", data[16:20])
+                    self.animations["file"].append({"name":name.split("\0")[0], "size":size})
+                else:
+                    print("failed to get file at index: ", i)
+        else:
+            print("faild to refresh file list")
+
+    def fastopen_anim_file(self, dev, name, read, index=0xFF):
+        data = struct.pack("BBBB", AMK_PROTOCOL_PREFIX, AMK_PROTOCOL_OPEN_FILE, index, 1 if read else 0) + bytearray(name, "utf-8")
+        data += b"\x00" * (64 - len(data))
+
+        dev.write(4, data)
+        data = dev.read(0x84, 64)
+        if data[2] == AMK_PROTOCOL_OK:
+            #print("Open file at index:", data[3])
+            return data[3]
+        else:
+            #print("Failed to open file: ", name)
+            return 0xFF
+    
+    def fastwrite_anim_file(self, dev, index, data, offset):
+        data = struct.pack("<BBBBI", AMK_PROTOCOL_PREFIX, AMK_PROTOCOL_WRITE_FILE, index, len(data), offset) + data
+        dev.write(4, data)
+        data = dev.read(0x84, 64)
+        if data[2] == AMK_PROTOCOL_OK:
+            #print("Write file at index:{}, size:{}".format(index, len(data)))
+            return True
+        else:
+            #print("Failed to write file: index=", index)
+            return False
+    
+    def fastwrite_anim_file_vendor(self, dev, data):
+        dev.write(4, data)
+        return True
+
+    def fastread_anim_file(self, dev, index, offset, size):
+        data = struct.pack("<BBBBI", AMK_PROTOCOL_PREFIX, AMK_PROTOCOL_READ_FILE, index, size, offset)
+        dev.write(4, data)
+        data = dev.read(0x84, 64)
+        if data[2] == AMK_PROTOCOL_OK:
+            size = data[3]
+            return data[8:8+size] 
+        else:
+            return None
+
+    def fastclose_anim_file(self, dev, index):
+        data = struct.pack("BBB", AMK_PROTOCOL_PREFIX, AMK_PROTOCOL_CLOSE_FILE, index)
+        dev.write(4, data)
+        data = dev.read(0x84, 64)
+        if data[2] == AMK_PROTOCOL_OK:
+            #print("Close file at index:", index)
+            return True
+        else:
+            #print("Failed to close file: index=", index)
+            return False
+
+    def open_anim_file(self, name, read, index=0xFF):
+        data = self.usb_send(self.dev, 
+                            struct.pack("BBBB", AMK_PROTOCOL_PREFIX, AMK_PROTOCOL_OPEN_FILE, index, 1 if read else 0) + bytearray(name, "utf-8"),
+                            retries=20)
+        if data[2] == AMK_PROTOCOL_OK:
+            #print("Open file at index:", data[3])
+            return data[3]
+        else:
+            #print("Failed to open file: ", name)
+            return 0xFF
+
+    def write_anim_file(self, index, data, offset):
+        data = self.usb_send(self.dev, 
+                            struct.pack("<BBBBI", AMK_PROTOCOL_PREFIX, AMK_PROTOCOL_WRITE_FILE, index, len(data), offset) + data,
+                            retries=20)
+        if data[2] == AMK_PROTOCOL_OK:
+            #print("Write file at index:{}, size:{}".format(index, len(data)))
+            return True
+        else:
+            #print("Failed to write file: index=", index)
+            return False
+    
+    def read_anim_file(self, index, offset, size):
+        data = self.usb_send(self.dev, 
+                            struct.pack("<BBBBI", AMK_PROTOCOL_PREFIX, AMK_PROTOCOL_READ_FILE, index, size, offset),
+                            retries=20)
+        if data[2] == AMK_PROTOCOL_OK:
+            size = data[3]
+            return data[8:8+size] 
+        else:
+            return None
+
+    def close_anim_file(self, index):
+        data = self.usb_send(self.dev, 
+                            struct.pack("BBB", AMK_PROTOCOL_PREFIX, AMK_PROTOCOL_CLOSE_FILE, index),
+                            retries=20)
+        if data[2] == AMK_PROTOCOL_OK:
+            #print("Close file at index:", index)
+            return True
+        else:
+            #print("Failed to close file: index=", index)
+            return False
+
+    def delete_anim_file(self, index):
+        data = self.usb_send(self.dev, 
+                            struct.pack("BBB", AMK_PROTOCOL_PREFIX, AMK_PROTOCOL_DELETE_FILE, index),
+                            retries=20)
+        if data[2] == AMK_PROTOCOL_OK:
+            #print("Delete file at index:", index)
+            return True
+        else:
+            #print("Failed to delete file: index=", index)
+            return False
+
+    def display_anim_file(self, play):
+        data = self.usb_send(self.dev, 
+                            struct.pack("BBB", AMK_PROTOCOL_PREFIX, AMK_PROTOCOL_DISPLAY_CONTROL, play),
+                            retries=20)
+        if data[2] == AMK_PROTOCOL_OK:
+            return True
+        else:
+            return False
+
+    def reload_amk_rgb_matrix(self):
+        #self.amk_rgb_matrix = {}
+        data = self.usb_send(self.dev, struct.pack("BB", AMK_PROTOCOL_PREFIX, AMK_PROTOCOL_GET_RGB_MATRIX_INFO), retries=20)
+        if data[2] == AMK_PROTOCOL_OK:
+            if self.amk_rgb_led["protocol_v2"]:
+                self.amk_rgb_matrix["start"] = data[3] + (data[4]<<8)
+                self.amk_rgb_matrix["count"] = data[5] + (data[6]<<8)
+            else:
+                self.amk_rgb_matrix["start"] = data[3]
+                self.amk_rgb_matrix["count"] = data[4]
+
+            self.amk_rgb_matrix["mode"] = {}
+            data = self.usb_send(self.dev, struct.pack("BB", AMK_PROTOCOL_PREFIX, AMK_PROTOCOL_GET_RGB_MATRIX_MODE), retries=20)
+            if data[2] == AMK_PROTOCOL_OK:
+                self.amk_rgb_matrix["mode"]["current"] = data[3]
+                self.amk_rgb_matrix["mode"]["custom"] = data[4]
+                self.amk_rgb_matrix["mode"]["total"] = data[5]
+                self.amk_rgb_matrix["mode"]["default"] = data[6]
+                #print("RGB Matrix: current={}, custom={}, total={}, default={}".format(data[3], data[4], data[5], data[6]))
+
+            self.amk_rgb_matrix["data"] = {}
+            for i in range(self.rows):
+                data = self.usb_send(self.dev, struct.pack("BBBB", AMK_PROTOCOL_PREFIX, AMK_PROTOCOL_GET_RGB_MATRIX_ROW_INFO, 0, i), retries=20)
+                if data[2] == AMK_PROTOCOL_OK:
+                    for j in range(self.cols):
+                        self.amk_rgb_matrix["data"][(i,j)] = data[4+j]
+
+            start = self.amk_rgb_matrix["start"]
+            count = self.amk_rgb_matrix["count"]
+            self.amk_rgb_matrix["leds"] = {}
+            for i in range(count):
+                #self.reload_rgb_matrix_led(start+i)
+                self.reload_rgb_matrix_led(i)
+        
+    def reload_rgb_matrix_led(self, index):
+        if self.amk_rgb_led["protocol_v2"]:
+            data = self.usb_send(self.dev, struct.pack("<BBH", AMK_PROTOCOL_PREFIX, AMK_PROTOCOL_GET_RGB_MATRIX_LED, index), retries=20)
+            offset = 5
+        else:
+            data = self.usb_send(self.dev, struct.pack("BBB", AMK_PROTOCOL_PREFIX, AMK_PROTOCOL_GET_RGB_MATRIX_LED, index), retries=20)
+            offset = 4
+
+        if data[2] == AMK_PROTOCOL_OK:
+            led = RgbLed(index, data[offset], data[offset], data[offset], data[offset])
+            self.amk_rgb_matrix["leds"][index] = led
+
+    def apply_rgb_matrix_led(self, index, led):
+        start = self.amk_rgb_matrix["start"]
+        self.amk_rgb_matrix["leds"][index] = led
+        if self.amk_rgb_led["protocol_v2"]:
+            data = self.usb_send(self.dev, struct.pack("<BBH", AMK_PROTOCOL_PREFIX, AMK_PROTOCOL_SET_RGB_MATRIX_LED, start+index) + led.pack(), retries=20)
+        else:
+            data = self.usb_send(self.dev, struct.pack("BBB", AMK_PROTOCOL_PREFIX, AMK_PROTOCOL_SET_RGB_MATRIX_LED, start+index) + led.pack(), retries=20)
+
+    def apply_rgb_matrix_mode(self, index, mode):
+        #print("apply rgb matrix mode: index={}, mode={}".format(index, mode))
+        data = self.usb_send(self.dev,
+                            struct.pack("BBBB", 
+                                        AMK_PROTOCOL_PREFIX, 
+                                        AMK_PROTOCOL_SET_RGB_MATRIX_MODE, 
+                                        index,
+                                        mode), retries=20)
+    
+    def get_rgb_matrix_led_index(self, row, col):
+        index = self.amk_rgb_matrix["data"].get((row, col)) #- self.amk_rgb_matrix["start"]
+        if index is None:
+            #print("get led index at row: {}, col: {}".format(row, col))
+            return None
+
+        if index >= len(self.amk_rgb_matrix["leds"]) + self.amk_rgb_matrix["start"]:
+            return None
+
+        return index
+
+    def get_rgb_matrix_led(self, row, col):
+        index = self.get_rgb_matrix_led_index(row, col)
+        if index is None:
+            return None
+
+        return self.amk_rgb_matrix["leds"][index]
+
+    def get_rgb_matrix_led_by_index(self, index):
+        if index < len(self.amk_rgb_matrix["leds"]):
+            return self.amk_rgb_matrix["leds"][index]
+        return None
+
+    def reload_snaptap(self):
+        data = self.usb_send(self.dev,
+                            struct.pack("BB", AMK_PROTOCOL_PREFIX, AMK_PROTOCOL_GET_SNAPTAP_COUNT), retries=20)
+        if data[2] == AMK_PROTOCOL_OK:
+            self.amk_snaptap_count = data[3]
+            self.amk_snaptap_keys = []
+            for i in range(self.amk_snaptap_count):
+                data = self.usb_send(self.dev,
+                                    struct.pack("BBB", AMK_PROTOCOL_PREFIX, AMK_PROTOCOL_GET_SNAPTAP, i), retries=20)
+                if data[2] == AMK_PROTOCOL_OK:
+                    key = SnaptapKey(i, data[3], data[4], data[5], data[6], data[7])
+                    self.amk_snaptap_keys.append(key)
+
+    def apply_snaptap(self, index, key):
+        cur = self.amk_snaptap_keys[index]
+        if cur.get_first_row() != key["first_row"] or \
+            cur.get_first_col() != key["first_col"] or \
+            cur.get_second_row() != key["second_row"] or \
+            cur.get_second_col() != key["second_col"] or \
+            cur.get_mode() != key["mode"]:
+            new_key = SnaptapKey(index, key["first_row"], key["first_col"], key["second_row"], key["second_col"], key["mode"]) 
+
+            data = self.usb_send(self.dev,
+                                struct.pack("BBBBBBBB", 
+                                            AMK_PROTOCOL_PREFIX, 
+                                            AMK_PROTOCOL_SET_SNAPTAP,
+                                            index,
+                                            new_key.get_first_row(),
+                                            new_key.get_first_col(),
+                                            new_key.get_second_row(),
+                                            new_key.get_second_col(),
+                                            new_key.get_mode()), retries=20)
+
+            if data[2] == AMK_PROTOCOL_OK:
+                self.amk_snaptap_keys[index] = new_key
+            else:
+                print("failed to set snaptap at ", index)
+
+    def apply_datetime(self, year, month, day, weekday, hour, minute, second):
+        data = self.usb_send(self.dev,
+                             struct.pack(">BBHBBBBBB",
+                                AMK_PROTOCOL_PREFIX,
+                                AMK_PROTOCOL_SET_DATETIME,
+                                year, month, day, weekday,
+                                hour, minute, second), retries=20)
+        if data[2] != AMK_PROTOCOL_OK:
+            print("failed to sychronize datetime with keyboard")
+
+    def reload_switch_type(self):
+        data = self.usb_send(self.dev, struct.pack("BB", AMK_PROTOCOL_PREFIX, AMK_PROTOCOL_GET_SWITCHTYPE), retries=20)
+        if data[2] == AMK_PROTOCOL_OK:
+            self.amk_switch_type = data[3]
+        else:
+            print("Failed to reload switch type")
+
+    def apply_switch_type(self, switch_type):
+        if self.amk_switch_type == switch_type:
+            return
+        
+        self.amk_switch_type = switch_type
+
+        data = self.usb_send(self.dev, 
+                            struct.pack("BBB", AMK_PROTOCOL_PREFIX, AMK_PROTOCOL_SET_SWITCHTYPE, switch_type),
+                            retries=20)
+
+        if data[2] != AMK_PROTOCOL_OK:
+            print("failed to set switch type")
+
+    def reload_aux_mode(self):
+        data = self.usb_send(self.dev, struct.pack("BB", AMK_PROTOCOL_PREFIX, AMK_PROTOCOL_GET_AUX_MODE), retries=20)
+        if data[2] == AMK_PROTOCOL_OK:
+            self.amk_aux_display["mode"] = data[3]
+        else:
+            print("Failed to reload aux mode")
+
+    def apply_aux_mode(self, aux_mode):
+        
+        self.amk_aux_display["mode"] = aux_mode 
+
+        data = self.usb_send(self.dev, 
+                            struct.pack("BBB", AMK_PROTOCOL_PREFIX, AMK_PROTOCOL_SET_AUX_MODE, aux_mode),
+                            retries=20)
+
+        if data[2] != AMK_PROTOCOL_OK:
+            print("failed to set aux mode")
+
+    def reload_rgb_leds(self, start, count):
+        cur = start
+        remain = count
+        if self.amk_rgb_led["protocol_v2"]:
+            led_max = 8
+        else:
+            led_max = 9
+
+        while remain > 0:
+            size = led_max if remain > led_max else remain
+            try:
+                if self.amk_rgb_led["protocol_v2"]:
+                    data = self.usb_send(self.dev, struct.pack("<BBHB", AMK_PROTOCOL_PREFIX, AMK_PROTOCOL_GET_RGB_DATA, cur, size), retries=20)
+                    offset = 6
+                else:
+                    data = self.usb_send(self.dev, struct.pack("BBBB", AMK_PROTOCOL_PREFIX, AMK_PROTOCOL_GET_RGB_DATA, cur, size), retries=20)
+                    offset = 5
+            except Exception as e:
+                print("Exception when reloading rgb leds: ", e)
+                break
+
+            if data[2] == AMK_PROTOCOL_OK:
+                if self.amk_rgb_led["protocol_v2"]:
+                    readed = data[5]
+                else:
+                    readed = data[4]
+                #print("readed:", readed)
+                for i in range(readed):
+                    led = RgbColor(data[i*3+offset], data[i*3+offset+1], data[i*3+offset+2])
+                    self.amk_rgb_data[cur+i] = led
+            remain = remain - size
+            cur = cur + size
+    
+    def color_from_hsv(self, hue, sat, val):
+        from PyQt5.QtGui import QColor
+        color = QColor.fromHsvF(hue/255.0, sat/255.0, val/255.0)
+        return RgbColor(color.red(), color.green(), color.blue())
+
+    def reload_rgb_param(self, rgb_type, param, index=0):
+        data = self.usb_send(self.dev, struct.pack("BBBBB", AMK_PROTOCOL_PREFIX, AMK_PROTOCOL_GET_RGB_PARAM, rgb_type, param, index), retries=20)
+        if data[2] == AMK_PROTOCOL_OK:
+            if rgb_type == RGB_TYPE_MATRIX:
+                if param == RGB_PARAM_COLOR:
+                    self.amk_rgb_matrix["color"] = RgbColor(data[4], data[5], data[6])
+                elif param == RGB_PARAM_HSV:
+                    self.amk_rgb_matrix["color"] = self.color_from_hsv(data[4], data[4], data[6])
+                elif param == RGB_PARAM_SPEED:
+                    self.amk_rgb_matrix["speed"] = data[4]
+                else:
+                    print("Unknown rgb matrix param: ", param)
+            elif rgb_type == RGB_TYPE_STRIP:
+                if param == RGB_PARAM_COLOR:
+                    self.amk_rgb_strip["strips"][index]["color"] = RgbColor(data[4], data[5], data[6])
+                elif param == RGB_PARAM_HSV:
+                    self.amk_rgb_strip["strips"][index]["color"] = self.color_from_hsv(data[4], data[4], data[6])
+                elif param == RGB_PARAM_SPEED:
+                    self.amk_rgb_strip["strips"][index]["speed"] = data[4]
+                elif param == RGB_PARAM_SYNC:
+                    self.amk_rgb_strip["strips"][index]["sync"] = data[4]
+                elif param == RGB_PARAM_BRIGHT:
+                    self.amk_rgb_strip["strips"][index]["bright"] = data[4]
+                elif param == RGB_PARAM_USE_CUSTOM_COLOR:
+                    self.amk_rgb_strip["strips"][index]["use_custom_color"] = bool(data[4])
+                else:
+                    print("Unknown rgb strip param: ", param)
+            elif rgb_type == RGB_TYPE_GRID:
+                if param == RGB_PARAM_COLOR:
+                    self.amk_rgb_grid["grids"][index]["color"] = RgbColor(data[4], data[5], data[6])
+                elif param == RGB_PARAM_HSV:
+                    self.amk_rgb_grid["grids"][index]["color"] = self.color_from_hsv(data[4], data[4], data[6])
+                elif param == RGB_PARAM_SPEED:
+                    self.amk_rgb_grid["grids"][index]["speed"] = data[4]
+                elif param == RGB_PARAM_BRIGHT:
+                    self.amk_rgb_grid["grids"][index]["bright"] = data[4]
+                else:
+                    print("Unknown rgb grid param: ", param)
+        else:
+            print("Failed to reload rgb param: ", param)
+
+    def apply_rgb_param(self, rgb_type, param, data, index=0):
+        if rgb_type == RGB_TYPE_MATRIX:
+            if param == RGB_PARAM_COLOR:
+                if self.amk_rgb_matrix["color"].get_red() == data.get_red() and \
+                    self.amk_rgb_matrix["color"].get_green() == data.get_green() and \
+                    self.amk_rgb_matrix["color"].get_blue() == data.get_blue():
+                    return
+
+                self.amk_rgb_matrix["color"] = data
+                data = self.usb_send(self.dev, struct.pack("BBBBBBBB", 
+                                                AMK_PROTOCOL_PREFIX, 
+                                                AMK_PROTOCOL_SET_RGB_PARAM, 
+                                                rgb_type,
+                                                param, 
+                                                index,
+                                                data.get_red(), 
+                                                data.get_green(), 
+                                                data.get_blue(), 
+                                                ), retries=20)
+            elif param == RGB_PARAM_HSV:
+                if self.amk_rgb_matrix["color"].get_red() == data.get_red() and \
+                    self.amk_rgb_matrix["color"].get_green() == data.get_green() and \
+                    self.amk_rgb_matrix["color"].get_blue() == data.get_blue():
+                    return
+
+                self.amk_rgb_matrix["color"] = data
+                from PyQt5.QtGui import QColor
+                color = QColor.fromRgbF(data.get_red()/255.0, data.get_green()/255.0, data.get_blue()/255.0)
+                h, s, v, a = color.getHsvF()
+                if h < 0:
+                    h = 0
+
+                hue = int(255*h)
+                sat = int(255*s)
+                val = int(255*v)
+
+                data = self.usb_send(self.dev, struct.pack("BBBBBBBB", 
+                                                AMK_PROTOCOL_PREFIX, 
+                                                AMK_PROTOCOL_SET_RGB_PARAM, 
+                                                rgb_type,
+                                                param, 
+                                                index,
+                                                hue,sat,val), retries=20)
+            elif param == RGB_PARAM_SPEED:
+                if self.amk_rgb_matrix["speed"] == data:
+                    return
+
+                self.amk_rgb_matrix["speed"] = data
+                data = self.usb_send(self.dev, struct.pack("BBBBBB", AMK_PROTOCOL_PREFIX, AMK_PROTOCOL_SET_RGB_PARAM, rgb_type, param, index, data), retries=20)
+        elif rgb_type == RGB_TYPE_STRIP:
+            if param == RGB_PARAM_COLOR:
+                data = self.usb_send(self.dev, struct.pack("BBBBBBBB", 
+                                                AMK_PROTOCOL_PREFIX, 
+                                                AMK_PROTOCOL_SET_RGB_PARAM, 
+                                                rgb_type,
+                                                param, 
+                                                index,
+                                                data.get_red(), 
+                                                data.get_green(), 
+                                                data.get_blue(), 
+                                                ), retries=20)
+            elif param == RGB_PARAM_HSV:
+                from PyQt5.QtGui import QColor
+                color = QColor.fromRgbF(data.get_red()/255.0, data.get_green()/255.0, data.get_blue()/255.0)
+                h, s, v, a = color.getHsvF()
+                if h < 0:
+                    h = 0
+
+                hue = int(255*h)
+                sat = int(255*s)
+                val = int(255*v)
+
+                data = self.usb_send(self.dev, struct.pack("BBBBBBBB", 
+                                                AMK_PROTOCOL_PREFIX, 
+                                                AMK_PROTOCOL_SET_RGB_PARAM, 
+                                                rgb_type,
+                                                param, 
+                                                index,
+                                                hue,sat,val), retries=20)
+            elif param == RGB_PARAM_SPEED:
+                data = self.usb_send(self.dev, struct.pack("BBBBBB", AMK_PROTOCOL_PREFIX, AMK_PROTOCOL_SET_RGB_PARAM, rgb_type, param, index, data), retries=20)
+            elif param == RGB_PARAM_SYNC:
+                if self.amk_rgb_strip["strips"][index]["sync"] != data:
+                    self.amk_rgb_strip["strips"][index]["sync"] = data
+                    #print("Set rgb strip({}) sync: {}".format(index, data))
+                    data = self.usb_send(self.dev, struct.pack("BBBBBB", AMK_PROTOCOL_PREFIX, AMK_PROTOCOL_SET_RGB_PARAM, rgb_type, param, index, data), retries=20)
+            elif param == RGB_PARAM_USE_CUSTOM_COLOR:
+                if self.amk_rgb_strip["strips"][index]["use_custom_color"] != data:
+                    self.amk_rgb_strip["strips"][index]["use_custom_color"] = data
+                    #print("Set rgb strip({}) use_custom_color: {}".format(index, data))
+                    data = self.usb_send(self.dev, struct.pack("BBBBBB", AMK_PROTOCOL_PREFIX, AMK_PROTOCOL_SET_RGB_PARAM, rgb_type, param, index, data), retries=20)
+            elif param == RGB_PARAM_BRIGHT:
+                if self.amk_rgb_strip["strips"][index]["bright"] != data:
+                    self.amk_rgb_strip["strips"][index]["bright"] = data
+                    #print("Set rgb strip({}) bright: {}".format(index, data))
+                    data = self.usb_send(self.dev, struct.pack("BBBBBB", AMK_PROTOCOL_PREFIX, AMK_PROTOCOL_SET_RGB_PARAM, rgb_type, param, index, data), retries=20)
+            else:
+                print("Invalid RGB param: ", param)
+        elif rgb_type == RGB_TYPE_GRID:
+            if param == RGB_PARAM_COLOR:
+                data = self.usb_send(self.dev, struct.pack("BBBBBBBB", 
+                                                AMK_PROTOCOL_PREFIX, 
+                                                AMK_PROTOCOL_SET_RGB_PARAM, 
+                                                rgb_type,
+                                                param, 
+                                                index,
+                                                data.get_red(), 
+                                                data.get_green(), 
+                                                data.get_blue(), 
+                                                ), retries=20)
+            elif param == RGB_PARAM_HSV:
+                from PyQt5.QtGui import QColor
+                color = QColor.fromRgbF(data.get_red()/255.0, data.get_green()/255.0, data.get_blue()/255.0)
+                h, s, v, a = color.getHsvF()
+                if h < 0:
+                    h = 0
+
+                hue = int(255*h)
+                sat = int(255*s)
+                val = int(255*v)
+
+                data = self.usb_send(self.dev, struct.pack("BBBBBBBB", 
+                                                AMK_PROTOCOL_PREFIX, 
+                                                AMK_PROTOCOL_SET_RGB_PARAM, 
+                                                rgb_type,
+                                                param, 
+                                                index,
+                                                hue,sat,val), retries=20)
+            elif param == RGB_PARAM_SPEED:
+                data = self.usb_send(self.dev, struct.pack("BBBBBB", AMK_PROTOCOL_PREFIX, AMK_PROTOCOL_SET_RGB_PARAM, rgb_type, param, index, data), retries=20)
+            elif param == RGB_PARAM_BRIGHT:
+                if self.amk_rgb_grid["grids"][index]["bright"] != data:
+                    self.amk_rgb_grid["grids"][index]["bright"] = data
+                    data = self.usb_send(self.dev, struct.pack("BBBBBB", AMK_PROTOCOL_PREFIX, AMK_PROTOCOL_SET_RGB_PARAM, rgb_type, param, index, data), retries=20)
+            else:
+                print("Invalid RGB GRID param: ", param)
+  
+        else:
+            print("Invalid RGB param: ", param)
+
+    def reload_amk_rgb_params(self, rgb_type):
+        if rgb_type == RGB_TYPE_MATRIX:
+            self.reload_rgb_param(RGB_TYPE_MATRIX, RGB_PARAM_COLOR)
+            self.reload_rgb_param(RGB_TYPE_MATRIX, RGB_PARAM_SPEED)
+        elif rgb_type == RGB_TYPE_STRIP:
+            for i in range (len(self.amk_rgb_strip["strips"])):
+                self.reload_rgb_param(RGB_TYPE_STRIP, RGB_PARAM_COLOR, i)
+                self.reload_rgb_param(RGB_TYPE_STRIP, RGB_PARAM_SPEED, i)
+                #self.amk_rgb_strip["strips"][i]["sync"] = 0xFF
+                self.reload_rgb_param(RGB_TYPE_STRIP, RGB_PARAM_SYNC, i)
+                if self.amk_feature["bright"]:
+                    #print("has bright feature")
+                    self.reload_rgb_param(RGB_TYPE_STRIP, RGB_PARAM_BRIGHT, i)
+                if self.amk_feature["use_custom_color"]:
+                    #print("has custom color feature")
+                    self.reload_rgb_param(RGB_TYPE_STRIP, RGB_PARAM_USE_CUSTOM_COLOR, i)
+
+        elif rgb_type == RGB_TYPE_GRID:
+            for i in range (len(self.amk_rgb_grid["grids"])):
+                self.reload_rgb_param(RGB_TYPE_GRID, RGB_PARAM_COLOR, i)
+                self.reload_rgb_param(RGB_TYPE_GRID, RGB_PARAM_SPEED, i)
+                if self.amk_feature["bright"]:
+                    self.reload_rgb_param(RGB_TYPE_GRID, RGB_PARAM_BRIGHT, i)
+        else:
+            print("unknown rgb type: ", rgb_type)
+    
+    def reload_switch_state(self):
+        data = self.usb_send(self.dev, struct.pack("BB", AMK_PROTOCOL_PREFIX, AMK_PROTOCOL_GET_SWITCH_STATE), retries=20)
+        if data[2] == AMK_PROTOCOL_OK:
+            self.amk_switch_states = []
+
+            count = data[3]
+            index = 4
+            for i in range(count):
+                row = data[index]
+                col = data[index+1]
+                position = (data[index+2]<<8) + data[index+3]
+                on = False
+                if (position & 0x8000) > 0:
+                    on = True
+                position = position & 0x7FFF
+                index = index + 4
+                switch_state = SwitchState(row, col, position, on)
+                self.amk_switch_states.append(switch_state)
+                #print("switch state: index={}, row={}, col={}, position={}, on={}".format(index, row, col, position, on))
+        else:
+            print("unsupported get switch state command")
+
+    def firmware_info(self):
+        data = self.usb_send(self.dev, struct.pack("BBB", AMK_PROTOCOL_PREFIX, AMK_PROTOCOL_FIRMWARE, FIRMWARE_INFO), retries=20)
+        if data[2] == AMK_PROTOCOL_OK:
+            vendor_id, product_id, family, date, second, size, = struct.unpack("<HHIIII", data[3:23])
+            return (vendor_id, product_id, family, date, second, size) 
+        else:
+            print("Firmware info failed")
+            return (0,0,0,0,0,0) 
+
+    def firmware_prepare(self):
+        data = self.usb_send(self.dev, struct.pack("BBB", AMK_PROTOCOL_PREFIX, AMK_PROTOCOL_FIRMWARE, FIRMWARE_PREPARE), retries=20)
+        if data[2] == AMK_PROTOCOL_OK:
+            #print("Firmware prepare ok")
+            return True
+        else:
+            print("Firmware prepare failed")
+            return False
+
+    def firmware_upload(self, offset, data):
+        result = self.usb_send(self.dev, 
+                                struct.pack("<BBBBI", AMK_PROTOCOL_PREFIX, AMK_PROTOCOL_FIRMWARE, FIRMWARE_WRITE, len(data), offset) + data, 
+                                retries=20)
+        if result[2] != AMK_PROTOCOL_OK:
+            print("Firmware upload failed at offset: ", offset)
+            return False
+    
+        #print("Firmware upload success")
+        return True
+
+    def firmware_finish(self):
+        data = self.usb_send(self.dev, struct.pack("BBB", AMK_PROTOCOL_PREFIX, AMK_PROTOCOL_FIRMWARE, FIRMWARE_FINISH), retries=20)
+        if data[2] == AMK_PROTOCOL_OK:
+            #print("Firmware finish ok")
+            return True
+        else:
+            print("Firmware finish failed")
+            return False
+
+    def firmware_reset(self):
+        data = self.usb_send(self.dev, struct.pack("BBB", AMK_PROTOCOL_PREFIX, AMK_PROTOCOL_FIRMWARE, FIRMWARE_RESET), retries=20)
+        if data[2] == AMK_PROTOCOL_OK:
+            #print("Firmware finish ok")
+            return True
+        else:
+            print("Firmware finish failed")
+            return False
+    
+    def reload_grid_mask(self, index):
+        data = self.usb_send(self.dev, struct.pack("BBB", AMK_PROTOCOL_PREFIX, AMK_PROTOCOL_GET_GRID_MASK, index), retries=20)
+        if data[2] == AMK_PROTOCOL_OK:
+            enabled = (data[4] >> GRID_ENABLE_SHIFT) & GRID_ENABLE_MASK
+            rotation = (data[4] >> GRID_ROTATION_SHIFT) & GRID_ROTATION_MASK
+            mode = (data[4] >> GRID_MODE_SHIFT) & GRID_MODE_MASK
+            typing = (data[4] >> GRID_TYPING_SHIFT) & GRID_TYPING_MASK
+            text = ""
+            for i in range(GRID_TEXT_MAX):
+                index = 5+i
+                if data[index] != 0:
+                    text = text + chr(data[index])
+                    #print("text: append", text)
+                else:
+                    break
+            #print(enabled, text, rotation, mode)
+            return (enabled, text, rotation, mode, typing)
+        else:
+            return None
+    
+    def apply_grid_mask(self, index, enabled, text, rotation, mode, typing):
+        if index >= len(self.amk_rgb_grid["grids"]):
+            print("invalid grid index: ", index)
+            return
+        
+        grid = self.amk_rgb_grid["grids"][index]
+        if grid["mask"] == 0 and grid["has_typing"] == 0:
+            return
+        
+        if (grid["mask_enable"] == enabled) and (grid["mask_text"] == text) \
+            and (grid["mask_rotation"] == rotation) and (grid["mask_mode"] == mode) \
+            and (grid["typing_enable"] == typing):
+            return
+
+        grid["mask_enable"] = enabled
+        grid["mask_text"] = text
+        grid["mask_rotation"] = rotation
+        grid["mask_mode"] = mode 
+        grid["typing_enable"] = typing
+        param = ((enabled&GRID_ENABLE_MASK) << GRID_ENABLE_SHIFT) | ((rotation&GRID_ROTATION_MASK) << GRID_ROTATION_SHIFT) \
+            | ((mode&GRID_MODE_MASK) << GRID_MODE_SHIFT) | ((typing&GRID_TYPING_MASK) << GRID_TYPING_SHIFT)
+
+        #print(hex(param))
+
+        data = self.usb_send(self.dev, struct.pack("BBBB", AMK_PROTOCOL_PREFIX, AMK_PROTOCOL_SET_GRID_MASK, index, param) + text.encode("utf-8"), retries=20)
+
+        if data[2] != AMK_PROTOCOL_OK:
+            print("Faild to set grid mask")
+
+        #print("Set grid mask: index={}, enable={}, text={}, rotation={}, mode={}, typing={}".format(index, enabled, text, rotation, mode, typing))
+    
+    def apply_esp32_command(self, main, wifi, cmd_type, param):
+        data = self.usb_send(self.dev, 
+                            struct.pack("BBBBB", AMK_PROTOCOL_PREFIX, AMK_PROTOCOL_ESP32_COMMAND, main, wifi, cmd_type) + param.encode("utf-8"), 
+                            retries=20)
+        if data[2] == AMK_PROTOCOL_OK:
+            print("ESP32 command applied,main={}, wifi={}, type={}, param={}".format(main, wifi, cmd_type, param))
+        else:
+            print("Failed to apply ESP32 command")
+
+    def apply_esp32_oper(self, oper, param):
+        if oper == ESP32_STATE:
+            data = self.usb_send(self.dev, 
+                            struct.pack("BBB", AMK_PROTOCOL_PREFIX, AMK_PROTOCOL_ESP32_OPERATION, oper), 
+                            retries=20)
+            if data[2] == AMK_PROTOCOL_OK:
+                if data[3] == ESP32AT_NOT_READY:
+                    self.amk_esp32_state["ready"] = False 
+                elif data[3] == ESP32AT_WIFI_NOT_CONNECT:
+                    self.amk_esp32_state["ready"] = True
+                    self.amk_esp32_state["connected"] = False 
+                elif data[3] == ESP32AT_WIFI_CONNECTED:
+                    self.amk_esp32_state["ready"] = True
+                    self.amk_esp32_state["connected"] = True 
+                else:
+                    print("Unknown ESP32 wifi state: ", data[3])
+            else:
+                print("Failed to get ESP32 state")
+        elif oper == ESP32_GET_SSID:
+            data = self.usb_send(self.dev, 
+                                struct.pack("BBBB", AMK_PROTOCOL_PREFIX, AMK_PROTOCOL_ESP32_OPERATION, oper, param["index"]), 
+                                retries=20)
+            if data[2] == AMK_PROTOCOL_OK:
+                if param["index"] == 0xFF:
+                    self.amk_esp32_state["ssid_count"] = data[3]
+                else:
+                    index = data[3]
+                    ssid = data[4:].decode("utf-8")
+                    print("ESP32 SSID at index {}: {}".format(index, ssid))
+                    self.amk_esp32_state["ssid_list"][index] = ssid
+            else:
+                print("Failed to get ESP32 SSID at index: ", param["index"])
+        elif oper == ESP32_CONNECT:
+                data = struct.pack("BBBBB", AMK_PROTOCOL_PREFIX, AMK_PROTOCOL_ESP32_OPERATION, oper, param["index"], len(param["password"])) 
+                data = data + param["password"].encode("utf-8") 
+                data = self.usb_send(self.dev, data, retries=20)
+                if data[2] == AMK_PROTOCOL_OK:
+                    self.amk_esp32_state["ssid"] = self.amk_esp32_state["ssid_list"][param["index"]]
+                    self.amk_esp32_state["password"] = param["password"] 
+                else:
+                    print("Failed to connect to ssid at index: ", param["index"])
+        elif oper == ESP32_DISCONNECT:
+            data = self.usb_send(self.dev, 
+                            struct.pack("BBB", AMK_PROTOCOL_PREFIX, AMK_PROTOCOL_ESP32_OPERATION, oper), 
+                            retries=20)
+            if data[2] == AMK_PROTOCOL_OK:
+                self.amk_esp32_state["connected"] = False
+            else:
+                print("Failed to disconnect wifi")
+        else:
+            print("Unknown ESP32 operation: ", oper)
