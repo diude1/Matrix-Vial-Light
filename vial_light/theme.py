@@ -4,6 +4,7 @@
 浅灰底 + 分层卡片 + 8px 圆角 + 天蓝强调色 + Segoe UI Variable 字体。
 """
 
+import time
 import tkinter as tk
 from tkinter import colorchooser, font as tkfont, messagebox, ttk
 
@@ -747,7 +748,22 @@ class Check(tk.Frame):
 
 
 class Entry(tk.Frame):
-    """Win11 输入框：4px 圆角 + 底边强调线。"""
+    """Win11 输入框：4px 圆角 + 底边强调线。
+
+    **踩过的坑：千万不要给内部 ``tk.Entry`` 绑 ``<BackSpace>``。**
+
+    ``tk.Entry`` 自带类级绑定 ``bind Entry <BackSpace> => tk::EntryBackspace
+    %W``（``<Delete>`` / ``<Control-a>`` / ``<Left>`` / ``<Right>`` …
+    同理）。``%W`` 是实际收到按键事件的窗口，因此必须让内部的
+    ``tk.Entry`` 保持焦点；外层 ``Canvas`` 只负责绘制外观。
+
+    正常退格仍交给 Tk 自己的 Entry 机制处理。Windows 上个别输入路径
+    还会在正常 ``BackSpace`` 之后额外送来一个 ``char=\\x08`` 的普通字符
+    事件；这个组件只过滤该异常后续事件，避免控制字符被插入文本。
+
+    不直接覆盖 ``<BackSpace>`` 专用绑定，以免破坏 Tk 原生的选区删除和
+    光标语义；只在通用按键事件中处理异常的控制字符。
+    """
 
     def __init__(self, parent, width=110, text="", bg=LAYER, justify="left",
                  font=None, on_submit=None):
@@ -771,7 +787,26 @@ class Entry(tk.Frame):
                               justify=justify, insertbackground=FG,
                               highlightthickness=0)
         self._justify = justify
+        # 光标位置由 Tk 自己维护；只在**内容被外部 set()** 时主动移到末尾，
+        # 正常打字/退格绝不干预（否则会跳光标，看起来像乱码）。
+        self._backspace_seen = False
+        self._backspace_seen_at = 0.0
+
+        # 内边距、几何只在 __init__ 里 place 一次。
+        # render() 绝不再 place —— place() 会重置光标，是「退格跳字」的直接原因。
+        self._pad = 10
+        self._placed_geo = (self._pad, 2, max(width - 2 * self._pad, 10), h - 6)
+        self.entry.place(x=self._placed_geo[0], y=self._placed_geo[1],
+                         width=self._placed_geo[2], height=self._placed_geo[3])
+
+        # 点画布内边距时也要把焦点交给输入框；entry 自身和 canvas
+        # 分别处理各自区域，所以这里要幂等，避免重复聚焦造成光标跳动。
         self.canvas.bind("<Button-1>", self._on_click)
+        self.entry.bind("<Button-1>", self._on_click)
+        # 正常 BackSpace 交给 Entry 类绑定；过滤 Windows/Tk 偶发的
+        # WM_CHAR 控制字符重复事件，避免出现 "ab\\b"。
+        self.entry.bind("<KeyPress>", self._on_key_press, add="+")
+        self.entry.bind("<KeyRelease>", self._on_key_release, add="+")
         self.entry.bind("<FocusIn>", self._focus_in)
         self.entry.bind("<FocusOut>", self._focus_out)
         self.entry.bind("<Enter>", self._enter)
@@ -781,8 +816,82 @@ class Entry(tk.Frame):
         self.render()
 
     def _on_click(self, _e=None):
-        if self._enabled:
+        """点进来就把键盘焦点钉在 entry 上（幂等）。
+
+        窗口刚建好或点击画布内边距时，焦点可能不在 entry 上；焦点不在
+        entry 时按键会被其他窗口接收，表现就是"打不了字、退格没反应"。
+        """
+        if not self._enabled:
+            return
+        try:
+            if self.entry.focus_get() is self.entry:
+                return          # 已经是焦点：不动光标
             self.entry.focus_set()
+        except tk.TclError:
+            pass
+
+    def _clear_backspace_seen(self):
+        self._backspace_seen = False
+        self._backspace_seen_at = 0.0
+
+    def _backspace_is_pending(self):
+        if not self._backspace_seen:
+            return False
+        if time.monotonic() - self._backspace_seen_at > 0.2:
+            self._clear_backspace_seen()
+            return False
+        return True
+
+    def _mark_backspace_seen(self):
+        self._backspace_seen = True
+        self._backspace_seen_at = time.monotonic()
+
+    def _delete_backward(self):
+        try:
+            if self.entry.selection_present():
+                self.entry.delete("sel.first", "sel.last")
+                return
+            cursor = int(self.entry.index("insert"))
+            if cursor > 0:
+                self.entry.delete(cursor - 1, cursor)
+        except tk.TclError:
+            pass
+
+    def _on_key_release(self, event):
+        if event.keysym in ("BackSpace", "KP_BackSpace"):
+            self._clear_backspace_seen()
+
+    def _on_key_press(self, event):
+        """过滤异常的退格字符事件，不干预 Tk 的正常退格绑定。"""
+        if not self._enabled:
+            return "break"
+        backspace_pending = self._backspace_is_pending()
+        if event.keysym == "BackSpace":
+            if event.char == "\x08" and backspace_pending:
+                self._clear_backspace_seen()
+                return "break"
+            self._mark_backspace_seen()
+            return
+        if event.keysym == "KP_BackSpace":
+            self._clear_backspace_seen()
+            self._delete_backward()
+            return "break"
+        if event.char == "\x08":
+            if backspace_pending:
+                self._clear_backspace_seen()
+                return "break"
+            self._delete_backward()
+            return "break"
+        if event.keysym == "??" and event.keycode == 8 and not event.char:
+            if backspace_pending:
+                self._clear_backspace_seen()
+                return "break"
+            self._delete_backward()
+            return "break"
+        if backspace_pending:
+            # IME composition and whitespace input can produce several
+            # non-character events before the next physical BackSpace.
+            self._clear_backspace_seen()
 
     def set_enabled(self, on):
         """置灰 / 恢复。置灰时不可聚焦、不可编辑、描边变浅。"""
@@ -813,6 +922,14 @@ class Entry(tk.Frame):
         self.render()
 
     def render(self):
+        """重画外观。**绝不调用 place()**。
+
+        ``place()`` 会把内部 Entry 重新布局，副作用是**光标被重置**。
+        这个 ``render()`` 会被 ``<FocusIn>`` / ``<Enter>`` / ``<Leave>``
+        以及每次 ``set()`` 触发 —— 只要它在打字过程中跑一次，光标就会
+        从中间跳回末尾，用户按退格看到的就是「删错了字符 / 像乱码」。
+        所以几何只在 ``__init__`` 里确定一次，这里只改颜色和描边。
+        """
         cv = self.canvas
         cv.delete("all")
         w, h = self._ew, self._eh
@@ -827,12 +944,11 @@ class Entry(tk.Frame):
         # 底边强调线（Win11 聚焦态）
         if self._focused and self._enabled:
             cv.create_line(4, h - 1.6, w - 4, h - 1.6, fill=ACCENT, width=2.4)
-        pad = 10
-        self.entry.place(x=pad, y=2, width=max(w - 2 * pad, 10), height=h - 6)
         if not self._enabled:
             fg = FG_DIS
         else:
             fg = FG if self.var.get() else FG_TER
+        # configure() 不会动光标，可以放心每次调
         self.entry.configure(fg=fg, bg=fill, justify=self._justify,
                              disabledforeground=FG_DIS, disabledbackground=fill)
 
@@ -840,7 +956,19 @@ class Entry(tk.Frame):
         return self.var.get()
 
     def set(self, text):
+        """程序化设值：内容变了才动光标，且移到末尾。
+
+        如果值没变（例如 Slider 每帧把同样的数字回写进来），
+        连光标都不碰 —— 否则会把用户正在编辑的位置顶走。
+        """
+        if self.var.get() == text:
+            return
         self.var.set(text)
+        try:
+            self.entry.icursor("end")
+            self.entry.selection_clear()
+        except tk.TclError:
+            pass
         self.render()
 
 
