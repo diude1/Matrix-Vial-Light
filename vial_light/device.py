@@ -1458,7 +1458,7 @@ class VialDevice(object):
             have = tuple(z for z in ZONES if groups[z])
             if len(have) < 2:
                 only = ZONE_LABELS[have[0]] if have else "灯"
-                return have, "这把我只读到「%s」一种灯，无法分区联动" % only
+                return have, "这把我只读到「%s」一种灯，无法分区控制" % only
             return have, "按 VialRGB 的 row/col 区分：有矩阵坐标的是轴灯，其余是配件灯"
 
         return (), (

@@ -141,7 +141,7 @@ class Preset(object):
             elif modes:
                 bits.append("配件灯 %d 种档位" % len(modes))
         if d.get("zone_mode"):
-            bits.append({"both": "联动", "key": "仅轴灯",
+            bits.append({"both": "两侧可编辑", "key": "仅轴灯",
                          "acc": "仅配件灯"}.get(d["zone_mode"], d["zone_mode"]))
         return " · ".join(bits) if bits else "（空方案）"
 

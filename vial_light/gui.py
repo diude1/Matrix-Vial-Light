@@ -5,8 +5,9 @@
 ``theme`` 组件上，不用 ttk 的默认外观。
 
 功能上多了「分区」页：把轴灯（键位灯）与配件灯（灯条 / 底灯 / 氛围灯）
-拆成两组，可以联动设置，也可以分开设置 —— 前提是固件暴露了可单独寻址的
-LED 接口（目前只有 VialRGB 能），AMK 官方固件会明确告知不支持。
+拆成两组，可以分开设置 —— 前提是固件暴露了可单独寻址的 LED 接口。
+AMK 官方固件通过扩展协议提供轴灯 / 灯条的独立通道，但逐键可编辑范围
+仍由具体固件的矩阵通道决定。
 """
 
 import tkinter as tk
@@ -164,10 +165,12 @@ class App(tk.Tk):
         self.leds = []
         self._pending = None
         self._pending_job = None
+        self._state_dirty = False
         self._busy = False
         self._anim_job = None
         self._anim_t = 0
         self._led_colors = []
+        self._led_known = set()
         # 差量推送的影子缓冲：``{global_index: (h,s,v)}``，记录当前已在
         # 键盘上的颜色 —— 只把"变了"的灯发下去，避免每次全量 68 次往返。
         self._pushed = {}
@@ -187,11 +190,15 @@ class App(tk.Tk):
         self._zone_counts = {"key": 0, "acc": 0}
         self._strip_index = None      # 当前选中的配件灯条
         self._strip_sel = None
+        self._strip_color_swatch = None
+        self._strip_color_hex = None
+        self._strip_color_pick = None
 
         self._build_style()
         self._build_header()
         self._build_tabs()
         self._build_footer()
+        self._set_state_dirty(False)
 
         # 后台 worker：把耗时 HID 操作从主线程挪走（审查项 #7）。
         # 必须在所有 _build_* 之后创建（_apply_busy 要引用 busy_lbl）。
@@ -570,8 +577,8 @@ class App(tk.Tk):
         outer = tk.Frame(self.tab_light.inner, bg=BG)
         outer.pack(fill="both", expand=True)
 
-        # --- 灯效 ---
-        wrap, card = self._section(outer, "灯效")
+        # --- 全局轴灯 ---
+        wrap, card = self._section(outer, "全局轴灯")
         wrap.pack(fill="x")
 
         row = self._row(card, "模式", label_width=6)
@@ -670,13 +677,21 @@ class App(tk.Tk):
                      command=self.pull_from_device).pack(side="left", padx=(0, 6))
 
         self.live_var = tk.IntVar(value=1)
-        T.Check(arow, "实时下发", self.live_var, bg=SURFACE).pack(
+        T.Check(arow, "实时下发", self.live_var,
+                command=self._on_live_toggle, bg=SURFACE).pack(
             side="left", padx=(PAD, 0))
 
-        T.FlatButton(arow, "保存到键盘", variant="accent", height=30, bg=SURFACE,
-                     command=self.save_to_device).pack(side="right")
-        tk.Label(arow, text="改完记得写入键盘", bg=SURFACE, fg=FG_FAINT,
-                 font=(UI_FONT, 8)).pack(side="right", padx=(0, PAD))
+        self.state_dirty_lbl = tk.Label(
+            arow, text="", bg=SURFACE, fg=FG_FAINT, font=(UI_FONT, 8))
+        self.state_dirty_lbl.pack(side="right", padx=(0, PAD))
+        self.save_btn = T.FlatButton(
+            arow, "保存到固件", variant="standard", height=30, bg=SURFACE,
+            command=self.save_to_device)
+        self.save_btn.pack(side="right", padx=(6, 0))
+        self.apply_state_btn = T.FlatButton(
+            arow, "应用到设备", variant="accent", height=30, bg=SURFACE,
+            command=self.apply_state_to_device)
+        self.apply_state_btn.pack(side="right")
 
         # --- 预设方案（一条方案 = 一整套灯光） ---
         wrap4, card4 = self._section(outer, "预设方案")
@@ -771,7 +786,7 @@ class App(tk.Tk):
 
         # --- 能力说明 ---
         wrap, card = self._section(outer, "分区控制",
-                                   "轴灯与配件灯可以联动，也可以分开设置")
+                                   "选择编辑目标：全局轴灯、配件灯批量或当前灯条")
         wrap.pack(fill="x")
 
         self.zone_notice = tk.Label(card, text="尚未连接设备", bg=SURFACE,
@@ -785,7 +800,7 @@ class App(tk.Tk):
                  font=(UI_FONT, 9)).pack(side="left")
         self.zone_seg = T.Segmented(
             mrow,
-            [("both", "联动（两种一起）"), ("key", "仅轴灯"), ("acc", "仅配件灯")],
+            [("both", "两侧可编辑"), ("key", "仅轴灯"), ("acc", "仅配件灯")],
             value="both", command=self._on_zone_mode, bg=SURFACE)
         self.zone_seg.pack(side="left", padx=(6, 0))
 
@@ -805,6 +820,25 @@ class App(tk.Tk):
             sr1, [("0", "—")], value="0", command=self._on_strip_pick,
             bg=SURFACE)
         self._strip_seg.pack(side="left", padx=(6, 0))
+
+        sr_color = tk.Frame(self._strip_bar, bg=SURFACE)
+        sr_color.pack(fill="x", pady=(0, 6))
+        tk.Label(sr_color, text="当前颜色", bg=SURFACE, fg=FG_DIM, width=8,
+                 anchor="w", font=(UI_FONT, 9)).pack(side="left")
+        self._strip_color_swatch = tk.Canvas(
+            sr_color, width=38, height=24, bg=SURFACE,
+            highlightthickness=0, cursor="hand2")
+        self._strip_color_swatch.pack(side="left", padx=(6, 8))
+        self._strip_color_swatch.bind(
+            "<Button-1>", lambda e: self._pick_strip_color())
+        self._strip_color_hex = T.Entry(
+            sr_color, width=96, text="#00ffff", bg=SURFACE,
+            justify="center", on_submit=self._on_strip_hex)
+        self._strip_color_hex.pack(side="left", padx=(0, 8))
+        self._strip_color_pick = T.FlatButton(
+            sr_color, "拾色", variant="subtle", height=30, bg=SURFACE,
+            command=self._pick_strip_color)
+        self._strip_color_pick.pack(side="left")
 
         sr2 = tk.Frame(self._strip_bar, bg=SURFACE)
         sr2.pack(fill="x")
@@ -829,7 +863,7 @@ class App(tk.Tk):
         self._strip_info.pack(side="right")
 
         # 第 3 行：亮度 / 速度。这两项在本固件上只能通过「逐灯写」实现，
-        # 而逐灯写只在 Custom 档被采用 —— 所以下面配一条说明。
+        # 而逐灯写只在 Custom 档被采用 —— 非 Custom 档时会置灰。
         sr3 = tk.Frame(self._strip_bar, bg=SURFACE)
         sr3.pack(fill="x", pady=(6, 0))
         tk.Label(sr3, text="亮度", bg=SURFACE, fg=FG_DIM, width=8, anchor="w",
@@ -888,7 +922,7 @@ class App(tk.Tk):
         b_swap.pack(side="right")
         b_sync = T.FlatButton(arow, "从键盘读取", variant="subtle", height=30,
                               bg=SURFACE,
-                              command=self._sync_zone_colours_from_leds)
+                              command=self._sync_zone_colours_from_device)
         b_sync.pack(side="right", padx=(0, 6))
 
         # 早期以为固件整组轴灯写色"漏掉了"全局 0 与 74 两颗真实灯，于是加了
@@ -947,7 +981,10 @@ class App(tk.Tk):
             self.log("结论：当前固件/通道不支持逐键上色。", "warn")
 
     def _build_zone_group(self, parent, zone):
-        label = ZONE_LABELS.get(zone, zone)
+        label = {
+            "key": "轴灯（全局）",
+            "acc": "配件灯（批量）",
+        }.get(zone, ZONE_LABELS.get(zone, zone))
         tint = ZONE_TINT.get(zone, ACCENT)
 
         wrap, card = self._section(parent, None)
@@ -1112,7 +1149,7 @@ class App(tk.Tk):
             data["count"].configure(fg=FG if active else FG_DIS)
             data["info"].configure(fg=FG_FAINT)
 
-        # 配件灯条那一排：只有配件灯侧可用时才让点
+        # 配件灯条那一排：模式始终可选；颜色 / 亮度 / 速度只在 Custom 档可写
         acc_on = zone_ok and mode in ("both", "acc") and bool(self._amk_strips())
         seg = getattr(self, "_strip_seg", None)
         if seg is not None:
@@ -1124,10 +1161,20 @@ class App(tk.Tk):
         combo = getattr(self, "_strip_mode_combo", None)
         if combo is not None:
             combo.configure(state="readonly" if acc_on else "disabled")
+        editable = acc_on and self._strip_editable()
+        color_hex = getattr(self, "_strip_color_hex", None)
+        if color_hex is not None:
+            color_hex.set_enabled(editable)
+        color_pick = getattr(self, "_strip_color_pick", None)
+        if color_pick is not None:
+            color_pick.set_enabled(editable)
+        color_swatch = getattr(self, "_strip_color_swatch", None)
+        if color_swatch is not None:
+            color_swatch.configure(cursor="hand2" if editable else "arrow")
         for name in ("_strip_bright_sld", "_strip_speed_sld"):
             sl = getattr(self, name, None)
             if sl is not None:
-                sl.set_enabled(acc_on)
+                sl.set_enabled(editable)
 
     def _refresh_zone_buttons(self):
         """分区页底部动作按钮的可用性。"""
@@ -1156,9 +1203,14 @@ class App(tk.Tk):
         if not capable:
             data["info"].configure(text="（此设备不支持分区控制，颜色 / 亮度只作存档）")
         else:
+            scope = ""
+            if zone == "acc" and self.dev.lighting_backend == "amk":
+                scope = "　（应用到全部灯条）"
             data["info"].configure(
-                text="H %d · S %d · V %d" % (h, s, v) if active else
-                     "H %d · S %d · V %d　（此侧未被当前作用范围选中）" % (h, s, v))
+                text=("H %d · S %d · V %d%s" % (h, s, v, scope)
+                      if active else
+                      "H %d · S %d · V %d　（此侧未被当前作用范围选中）"
+                      % (h, s, v)))
 
     def _zone_active(self, zone):
         if len(self._zone_capable) < 2 or self.dev is None:
@@ -1174,11 +1226,12 @@ class App(tk.Tk):
         blocked = self._zone_blocked()
         if blocked:
             self.log("作用范围已切换为「%s」，但%s" % (
-                {"both": "联动", "key": "仅轴灯", "acc": "仅配件灯"}.get(mode, mode),
+                {"both": "两侧可编辑", "key": "仅轴灯",
+                 "acc": "仅配件灯"}.get(mode, mode),
                 blocked), "warn")
             return
-        self.log("分区作用范围：%s" % {
-            "both": "联动（轴灯 + 配件灯）",
+        self.log("分区编辑范围：%s" % {
+            "both": "两侧可编辑（单次修改仍只提交当前侧）",
             "key": "仅轴灯",
             "acc": "仅配件灯",
         }.get(mode, mode), "ok")
@@ -1195,12 +1248,12 @@ class App(tk.Tk):
     def _zone_hint_for(self, dev):
         """分区页顶部提示语（按后端给不同的操作说明）。"""
         if dev is not None and dev.lighting_backend == "amk":
-            return ("轴灯走 0x80–0x83 整组设色，配件灯走 AMK 扩展协议逐灯写色，"
-                    "两组各有各的灯效表、互不干扰。「联动」时两侧用各自颜色"
-                    "一起推送；选「仅轴灯」/「仅配件灯」则只改一侧，"
-                    "另一侧保持固件当前状态（含它正在跑的灯效）。")
-        return ("「联动」时两侧用各自颜色一起推送；选「仅轴灯」/「仅配件灯」"
-                "则只改一侧，另一侧保持固件当前状态。")
+            return ("灯光页负责轴灯的全局灯效 / 速度；这里的轴灯卡片只改同一组"
+                    "轴灯的颜色 / 亮度。配件灯批量卡片会把颜色 / 亮度应用到"
+                    "全部灯条；上方灯条栏则只编辑当前选中的一条灯条。只有"
+                    "Custom 模式支持自定义颜色、亮度和速度。")
+        return ("两侧卡片分别写入对应 LED 子集；当前编辑范围只决定哪些卡片可改，"
+                "单次修改不会自动提交另一侧。VialRGB 分区写入会切换全局灯效为 Direct。")
 
     def _set_zone_colour(self, zone, colour):
         blocked = self._zone_blocked()
@@ -1208,6 +1261,7 @@ class App(tk.Tk):
             self.log(blocked, "warn")
             return
         self._zone_colors[zone] = tuple(colour)
+        self._zone_val[zone] = int(colour[2])
         self._refresh_zone_widgets(zone)
         if self._zone_active(zone):
             self.push_zone(zone)
@@ -1217,6 +1271,7 @@ class App(tk.Tk):
             return
         h, s, _v = self._zone_colors.get(zone, (0, 0, 255))
         self._zone_colors[zone] = (h, s, int(value))
+        self._zone_val[zone] = int(value)
         self._refresh_zone_widgets(zone)
         if self._zone_active(zone):
             self.push_zone(zone)
@@ -1252,6 +1307,8 @@ class App(tk.Tk):
             return
         self._zone_colors["key"], self._zone_colors["acc"] = (
             self._zone_colors["acc"], self._zone_colors["key"])
+        self._zone_val["key"], self._zone_val["acc"] = (
+            self._zone_colors["key"][2], self._zone_colors["acc"][2])
         for z in ("key", "acc"):
             self._refresh_zone_widgets(z)
         self.push_zone(None)
@@ -1276,8 +1333,48 @@ class App(tk.Tk):
                 tally[col] = tally.get(col, 0) + 1
             best = max(tally.items(), key=lambda kv: kv[1])[0]
             self._zone_colors[zone] = tuple(best)
+            self._zone_val[zone] = int(best[2])
             self._refresh_zone_widgets(zone)
         self.log("已按逐键页当前配色回填两侧代表色", "ok")
+
+    def _sync_zone_colours_from_device(self):
+        """从设备实际可回读的通道同步两侧代表色。"""
+        blocked = self._zone_blocked()
+        if blocked:
+            self.log(blocked, "warn")
+            return
+        if self.dev.lighting_backend == "amk":
+            self.pull_from_device()
+            if self.state is not None:
+                self._zone_colors["key"] = (
+                    self.state.hue, self.state.sat, self.state.val)
+                self._zone_val["key"] = self.state.val
+
+            tally = {}
+            for strip in self._amk_strips():
+                try:
+                    led = self.dev.read_strip_led(strip.start)
+                except Exception:
+                    led = None
+                if led is not None:
+                    colour = (led.hue, led.sat, led.val)
+                    tally[colour] = tally.get(colour, 0) + 1
+            if tally:
+                colour = max(tally.items(), key=lambda item: item[1])[0]
+                self._zone_colors["acc"] = colour
+                self._zone_val["acc"] = colour[2]
+            for zone in ("key", "acc"):
+                self._refresh_zone_widgets(zone)
+            self._refresh_strip_bar()
+            self.log("已从 AMK 设备状态同步轴灯和配件灯代表色", "ok")
+            return
+
+        if self.dev.lighting_backend == "vialrgb":
+            self.pull_from_device()
+            self.log("VialRGB 协议不能回读逐灯颜色，未修改分区代表色", "warn")
+            return
+
+        self.log("当前灯光后端没有可回读的分区颜色通道", "warn")
 
     # ---- 配件灯条（AMK 后端专用）-------------------------------------
     def _amk_strips(self):
@@ -1305,6 +1402,10 @@ class App(tk.Tk):
             self._strip_mode_combo.set("")
             self._strip_info.configure(text="")
             self._strip_note.configure(text="")
+            if self._strip_color_hex is not None:
+                self._strip_color_hex.set("#000000")
+            if self._strip_color_swatch is not None:
+                self._strip_color_swatch.delete("all")
             return
         if not bar.winfo_ismapped():
             bar.pack(fill="x", pady=(10, 0))
@@ -1325,15 +1426,10 @@ class App(tk.Tk):
         else:
             self._strip_mode_combo.set("")
 
-        # 亮度 / 速度滑块跟着当前灯条走
-        if s.val:
-            self._strip_bright_sld.set(int(s.val))
-        if s.speed:
-            self._strip_speed_sld.set(int(s.speed))
-
         # 逐颗读一次，统计「亮着的」和实际色值，方便一眼看出卡死状态
         lit = 0
         colors = set()
+        first_led = None
         for i in range(s.count):
             led = None
             try:
@@ -1342,9 +1438,28 @@ class App(tk.Tk):
                 pass
             if led is None:
                 continue
+            if first_led is None:
+                first_led = led
             if led.on and led.val > 0:
                 lit += 1
                 colors.add((led.hue, led.sat, led.val))
+        if first_led is not None:
+            # 用首颗灯作为当前灯条的代表值；右侧统计仍会提示是否混色。
+            s.hue, s.sat, s.val = (
+                first_led.hue, first_led.sat, first_led.val)
+            s.speed = first_led.speed
+        self._strip_sel = s
+        self._strip_bright_sld.set(int(s.val))
+        self._strip_speed_sld.set(int(s.speed))
+        if self._strip_color_hex is not None:
+            hx = C.hsv_to_hex(s.hue, s.sat, s.val)
+            self._strip_color_hex.set(hx)
+            if self._strip_color_swatch is not None:
+                self._strip_color_swatch.delete("all")
+                pts = T.rounded_points(0.5, 0.5, 37.5, 23.5, 4)
+                self._strip_color_swatch.create_polygon(
+                    pts, fill=hx, outline=STROKE, smooth=True,
+                    splinesteps=8)
         note = "%d/%d 颗亮着" % (lit, s.count)
         if len(colors) == 1:
             h, sa, v = colors.pop()
@@ -1357,16 +1472,16 @@ class App(tk.Tk):
         editable = effects.strip_mode_editable(s.mode)
         if editable:
             self._strip_note.configure(
-                text="当前是「自定义（逐灯上色）」档：颜色、亮度、速度都由本"
-                     "软件逐颗写入，改完立刻生效。", fg=FG_FAINT)
+                text="当前灯条是「自定义（逐灯上色）」档：上方颜色、亮度、"
+                     "速度只作用于当前灯条，改完立刻生效。", fg=FG_FAINT)
         else:
             en, zh = effects.strip_effect_name(s.mode)
             self._strip_note.configure(
                 text="当前是「%d %s」档：这一档的画面由固件自己渲染，"
-                     "本机固件没有开放灯条级颜色/亮度接口，所以颜色、亮度、"
-                     "速度都改不动。想自己配色请切到「0 自定义（逐灯上色）」。"
+                     "颜色、亮度、速度控件已禁用。想自己配色请先切到"
+                     "「0 自定义（逐灯上色）」档。"
                      % (s.mode, zh), fg=WARN)
-        self._strip_sel = s
+        self._update_zone_enabled()
 
     def _strip_editable(self):
         """当前选中的灯条是否处在可写颜色的档位。"""
@@ -1378,17 +1493,64 @@ class App(tk.Tk):
             s = strips[0]
         return effects.strip_mode_editable(s.mode)
 
+    def _on_strip_hex(self, _event=None):
+        try:
+            r, g, b = C.hex_to_rgb(self._strip_color_hex.get())
+        except ValueError as exc:
+            self.log(str(exc), "err")
+            return
+        self._set_strip_color(C.rgb_to_hsv(r, g, b))
+
+    def _pick_strip_color(self):
+        s = self._selected_strip()
+        if s is None:
+            return
+        if not self._strip_editable():
+            self.log("当前灯效不是 Custom，不能修改自定义颜色", "warn")
+            return
+        rgb, _ = colorchooser.askcolor(
+            color=C.hsv_to_hex(s.hue, s.sat, s.val))
+        if not rgb:
+            return
+        r, g, b = [int(x) for x in rgb]
+        self._set_strip_color(C.rgb_to_hsv(r, g, b))
+
+    def _set_strip_color(self, colour):
+        s = self._selected_strip()
+        if s is None:
+            return
+        if not self._strip_editable():
+            self.log("当前灯效不是 Custom，不能修改自定义颜色", "warn")
+            return
+        h, sat, val = [int(x) for x in colour]
+        try:
+            ok = self.dev.set_strip_color(
+                s, h, sat, val, on=val > 0, force=False)
+        except Exception as exc:
+            self.log("设置当前灯条颜色失败: %s" % exc, "err")
+            return
+        if not ok:
+            self.log("当前灯条颜色写入失败", "err")
+            return
+        self.log("灯条 %d 颜色已更新（仅当前灯条）" % (s.index + 1), "ok")
+        self._refresh_strip_bar()
+
     def _on_strip_bright(self, value):
         s = self._selected_strip()
         if s is None:
             return
-        h, sa, _ = self._zone_colors.get("acc", (0, 0, 255))
-        # 用滑块值当 V，整条灯条按「当前色相/饱和度」重刷
+        if not self._strip_editable():
+            self.log("当前灯效不是 Custom，不能修改亮度", "warn")
+            return
+        # 用当前灯条的色相 / 饱和度改写整条灯条。
         try:
-            self.dev.set_strip_color(s, s.hue or h, s.sat or sa, int(value),
-                                     on=int(value) > 0, force=True)
+            ok = self.dev.set_strip_color(
+                s, s.hue, s.sat, int(value), on=int(value) > 0, force=False)
         except Exception as exc:
             self.log("设置配件灯亮度失败: %s" % exc, "err")
+            return
+        if not ok:
+            self.log("设置配件灯亮度失败", "err")
             return
         self.log("配件灯条 %d 亮度 = %d（逐灯写）" % (s.index + 1, int(value)), "ok")
         self._refresh_strip_bar()
@@ -1397,10 +1559,16 @@ class App(tk.Tk):
         s = self._selected_strip()
         if s is None:
             return
+        if not self._strip_editable():
+            self.log("当前灯效不是 Custom，不能修改速度", "warn")
+            return
         try:
-            self.dev.set_strip_led_speed(s, int(value))
+            ok = self.dev.set_strip_led_speed(s, int(value))
         except Exception as exc:
             self.log("设置配件灯速度失败: %s" % exc, "err")
+            return
+        if not ok:
+            self.log("设置配件灯速度失败", "err")
             return
         self.log("配件灯条 %d 速度 = %d（逐灯写，仅自定义档有效）"
                  % (s.index + 1, int(value)), "ok")
@@ -1460,9 +1628,13 @@ class App(tk.Tk):
         if not strips:
             self.log("此设备没有可独立控制的配件灯条", "warn")
             return None
-        if self._strip_index is None or self._strip_index >= len(strips):
+        if self._strip_index is None:
             self._strip_index = strips[0].index
-        return strips[self._strip_index]
+        for strip in strips:
+            if strip.index == self._strip_index:
+                return strip
+        self._strip_index = strips[0].index
+        return strips[0]
 
     def push_zone(self, zone):
         """推送某一侧（``None`` = 按当前作用范围推）。"""
@@ -1539,13 +1711,15 @@ class App(tk.Tk):
             if "acc" in targets:
                 h, s, v = self._zone_colors["acc"]
                 for strip in self._amk_strips():
-                    # 必须切到 Custom 档，逐灯色才会被固件采用（本机唯一的
-                    # 配件灯上色通道；灯条级参数接口在本固件上不可用）
+                    # 这是分区页的批量入口：明确把颜色应用到全部灯条。
+                    # 本机只有 Custom 档会采用逐灯色，因此记录切档提示。
+                    was_custom = (
+                        strip.mode == effects.STRIP_EFFECT_CUSTOM)
                     if self.dev.set_strip_color(strip, h, s, v, on=v > 0,
                                                 force=True):
                         written += strip.count
-                        if strip.mode != effects.STRIP_EFFECT_CUSTOM:
-                            self.log("灯条 %d 非自定义档无法上色，已自动切到"
+                        if not was_custom:
+                            self.log("批量改色：灯条 %d 已从原灯效切到"
                                      "「自定义」" % (strip.index + 1), "warn")
         except Exception as exc:
             self.log("分区推送失败: %s" % exc, "err")
@@ -1722,8 +1896,10 @@ class App(tk.Tk):
         tk.Label(r2, text="效果", bg=BG, fg=FG_DIM, font=(UI_FONT, 9), width=4,
                  anchor="w").pack(side="left", padx=(0, 6))
         self.anim_var = tk.IntVar(value=0)
-        T.Check(r2, "本地动画（由电脑持续推送，约 30fps）", self.anim_var,
-                command=self._toggle_anim, bg=BG).pack(side="left")
+        self.anim_check = T.Check(
+            r2, "本地动画（仅 VialRGB，由电脑持续推送，约 30fps）",
+            self.anim_var, command=self._toggle_anim, bg=BG)
+        self.anim_check.pack(side="left")
 
         T.FlatButton(r2, "从键盘读取", variant="standard", height=30, bg=BG,
                      command=self._pk_pull).pack(side="right", padx=(6, 0))
@@ -1770,6 +1946,8 @@ class App(tk.Tk):
             return
         if self.dev.lighting_backend != "amk":
             self.pull_from_device()
+            self.log("VialRGB 协议只能回读全局灯效状态，不能回读逐灯颜色；"
+                     "画布颜色保持当前编辑内容", "warn")
             return
         try:
             data = self.dev.perkey_read()
@@ -1787,6 +1965,8 @@ class App(tk.Tk):
                 continue
             h, s, v = got[0], got[1], got[2]
             self._led_colors[led.index] = (h, s, v)
+            self._led_known.add(led.global_index)
+            self._pushed[led.global_index] = (h, s, v)
             if v:
                 n += 1
         self.draw_leds()
@@ -1825,14 +2005,23 @@ class App(tk.Tk):
             cx = ox + led.x * unit
             cy = oy + led.y * unit
             fillc = C.hsv_to_hex(hh, ss, vv) if vv else "#e8ecf1"
+            read_only = (
+                self.dev is not None
+                and self.dev.lighting_backend == "amk"
+                and not led.is_matrix)
             cv.create_oval(cx - size / 2, cy - size / 2, cx + size / 2,
                            cy + size / 2, fill=fillc,
-                           outline=STROKE if led.is_matrix else ACCENT_SOFT,
+                           outline=(FG_DIS if read_only else
+                                    (STROKE if led.is_matrix else ACCENT_SOFT)),
                            width=1)
 
         # 图例：两种灯的边框颜色不同
         cv.create_text(12, 12, anchor="nw", fill=FG_FAINT, font=(UI_FONT, 8),
-                       text="细边 = 轴灯（键位灯）　　亮蓝边 = 配件灯（灯条/底灯）")
+                       text=("细边 = 可写轴灯　　亮蓝边 = 配件灯"
+                             + ("（AMK 配件灯仅显示，不支持逐灯写）"
+                                if self.dev is not None
+                                and self.dev.lighting_backend == "amk"
+                                else "")))
 
     def _pk_led_at(self, x, y):
         if not self.leds:
@@ -1852,6 +2041,12 @@ class App(tk.Tk):
         led = self._pk_led_at(event.x, event.y)
         if led is None:
             return
+        if len(self._led_colors) != len(self.leds):
+            self._led_colors = [(0, 0, 0)] * len(self.leds)
+        if (self.dev is not None and self.dev.lighting_backend == "amk"
+                and not led.is_matrix):
+            self.log("AMK 配件灯在逐键页仅用于显示，请到分区页编辑灯条", "warn")
+            return
         tool = self._paint_tool.get()
         if tool == "取色":
             hh, ss, vv = self._led_colors[led.index]
@@ -1860,17 +2055,30 @@ class App(tk.Tk):
                 self.apply_color(hh, ss, vv)
             return
         if tool == "填充":
-            self._led_colors = [tuple(self._current_color)] * len(self.leds)
+            changed = set()
+            for item in self.leds:
+                if (self.dev is not None
+                        and self.dev.lighting_backend == "amk"
+                        and not item.is_matrix):
+                    continue
+                self._led_colors[item.index] = tuple(self._current_color)
+                changed.add(item.global_index)
         else:
             self._led_colors[led.index] = tuple(self._current_color)
+            changed = {led.global_index}
+        self._led_known.update(changed)
         self.draw_leds()
-        self.push_leds()
+        self.push_leds(changed=changed)
 
     def _pk_drag(self, event):
         led = self._pk_led_at(event.x, event.y)
         if led is None or self._paint_tool.get() != "画笔":
             return
+        if (self.dev is not None and self.dev.lighting_backend == "amk"
+                and not led.is_matrix):
+            return
         self._led_colors[led.index] = tuple(self._current_color)
+        self._led_known.add(led.global_index)
         self.draw_leds()
         # 拖动是高频事件：只标记改动、防抖批量推送，不要每帧都全量写
         self._schedule_pk_push(led.global_index)
@@ -1882,31 +2090,45 @@ class App(tk.Tk):
         h, s, v = self._current_color
         xs = [l.x for l in self.leds]
         ys = [l.y for l in self.leds]
-        results = []
+        if len(self._led_colors) != len(self.leds):
+            self._led_colors = [(0, 0, 0)] * len(self.leds)
+        results = list(self._led_colors)
+        changed = set()
         for led in self.leds:
+            if (self.dev is not None and self.dev.lighting_backend == "amk"
+                    and not led.is_matrix):
+                continue
             if name == "水平渐变":
                 t = (led.x - min(xs)) / max(max(xs) - min(xs), 1)
-                results.append((int(h + t * 120) % 256, s, v))
+                colour = (int(h + t * 120) % 256, s, v)
             elif name == "垂直渐变":
                 t = (led.y - min(ys)) / max(max(ys) - min(ys), 1)
-                results.append((int(h + t * 120) % 256, s, v))
+                colour = (int(h + t * 120) % 256, s, v)
             elif name == "彩虹":
                 t = (led.x - min(xs)) / max(max(xs) - min(xs), 1)
-                results.append((int(t * 255) % 256, 255, v))
+                colour = (int(t * 255) % 256, 255, v)
             elif name == "波浪":
                 t = led.index / max(len(self.leds) - 1, 1)
-                results.append((int((h + t * 200) % 256), s,
-                                int(v * (0.35 + 0.65 * abs((t * 4) % 2 - 1)))))
+                colour = (int((h + t * 200) % 256), s,
+                          int(v * (0.35 + 0.65 * abs((t * 4) % 2 - 1))))
             elif name == "全部同色":
-                results.append((h, s, v))
+                colour = (h, s, v)
             else:
-                results.append((0, 0, 0))
+                colour = (0, 0, 0)
+            results[led.index] = colour
+            changed.add(led.global_index)
         self._led_colors = results
+        self._led_known.update(changed)
         self.draw_leds()
-        self.push_leds()
+        self.push_leds(changed=changed)
 
     def _toggle_anim(self):
         if self.anim_var.get():
+            if (self.dev is None or self.dev.lighting_backend != "vialrgb"
+                    or not self.leds):
+                self.anim_var.set(0)
+                self.log("本地动画仅支持已读取 LED 的 VialRGB 设备", "warn")
+                return
             self._anim_t = 0
             self.log("本地动画已开启（由电脑持续推送，约 30fps）", "ok")
         else:
@@ -1916,7 +2138,8 @@ class App(tk.Tk):
             self.log("本地动画已关闭")
 
     def _anim_step(self):
-        if not self.anim_var.get() or not self.leds:
+        if (not self.anim_var.get() or not self.leds or self.dev is None
+                or self.dev.lighting_backend != "vialrgb"):
             self._anim_job = None
             return
         self._anim_t += 4
@@ -2114,15 +2337,33 @@ class App(tk.Tk):
         if self.dev is not None:
             self.dev.close()
             self.dev = None
+        if self._pending_job is not None:
+            try:
+                self.after_cancel(self._pending_job)
+            except Exception:
+                pass
+            self._pending_job = None
+        self._pending = None
+        self.state = None
+        self._set_state_dirty(False)
+        if self._pk_push_job is not None:
+            try:
+                self.after_cancel(self._pk_push_job)
+            except Exception:
+                pass
+            self._pk_push_job = None
+        self._pk_pending = set()
         self.connect_btn.configure_text("连接")
         self.backend_lbl.configure(text="未连接", fg=FG_FAINT)
         self.leds = []
         self._led_colors = []
+        self._led_known = set()
         self._strip_index = None
         self._strip_sel = None
         if self.anim_var.get():
             self.anim_var.set(0)
             self._toggle_anim()
+        self._update_anim_enabled()
         self.draw_layout()
         self.draw_leds()
         self.refresh_zone_panel()
@@ -2152,8 +2393,15 @@ class App(tk.Tk):
     def load_leds(self):
         self.leds = []
         self._led_colors = []
+        self._led_known = set()
         # 影子缓冲一并清空：新设备/新灯位要按全量重新推送
         self._pushed = {}
+        if self._pk_push_job is not None:
+            try:
+                self.after_cancel(self._pk_push_job)
+            except Exception:
+                pass
+            self._pk_push_job = None
         self._pk_pending = set()
         if self.dev is None:
             self.pk_hint.configure(text="未连接")
@@ -2171,7 +2419,8 @@ class App(tk.Tk):
                 acc_n = len(self.leds) - key_n
                 if self.dev.perkey_supported():
                     self.pk_hint.configure(
-                        text="%d 键可逐键上色 / 配件灯 %d 颗" % (key_n, acc_n))
+                        text="%d 键可逐键上色 / 配件灯 %d 颗（配件灯请到分区页编辑）"
+                             % (key_n, acc_n))
                 else:
                     self.pk_hint.configure(
                         text="轴灯 %d / 配件灯 %d（矩阵通道不可用）"
@@ -2179,11 +2428,13 @@ class App(tk.Tk):
             except Exception as exc:
                 self.log("读取 AMK 灯位失败: %s" % exc, "warn")
                 self.pk_hint.configure(text="不支持逐键")
+            self._update_anim_enabled()
             self.draw_leds()
             return
 
         if backend != "vialrgb":
             self.pk_hint.configure(text="不支持逐键")
+            self._update_anim_enabled()
             self.draw_leds()
             return
         try:
@@ -2198,7 +2449,28 @@ class App(tk.Tk):
                 len(self.leds), key_n, acc_n), "ok")
         except Exception as exc:
             self.log("读取 LED 信息失败: %s" % exc, "err")
+        self._update_anim_enabled()
         self.draw_leds()
+
+    def _update_anim_enabled(self):
+        supported = (
+            self.dev is not None
+            and self.dev.lighting_backend == "vialrgb"
+            and bool(self.leds)
+        )
+        try:
+            self.anim_check.set_enabled(supported)
+        except Exception:
+            return
+        if not supported and self.anim_var.get():
+            self.anim_var.set(0)
+            if self._anim_job is not None:
+                try:
+                    self.after_cancel(self._anim_job)
+                except Exception:
+                    pass
+                self._anim_job = None
+            self.log("当前设备不支持电脑本地动画，已自动关闭", "warn")
 
     # ==================================================================
     # 灯光读写
@@ -2209,11 +2481,28 @@ class App(tk.Tk):
         if self.dev.lighting_backend is None:
             self.log("该固件未暴露 raw HID 灯光通道，只能读取其他信息", "warn")
             return
+        if self._state_dirty:
+            ok = messagebox.askyesno(
+                "放弃未应用修改",
+                "当前有尚未应用到设备的全局灯光修改。\n"
+                "从键盘读取会用设备状态覆盖这些修改，是否继续？",
+                parent=self)
+            if not ok:
+                self.log("已取消读取，保留未应用修改", "info")
+                return
+        if self._pending_job is not None:
+            try:
+                self.after_cancel(self._pending_job)
+            except Exception:
+                pass
+            self._pending_job = None
         try:
             self.state = self.dev.read_lighting()
         except Exception as exc:
             self.log("读取灯光状态失败: %s" % exc, "err")
             return
+        self._pending = None
+        self._set_state_dirty(False)
         self._sync_widgets()
         self.log("已读取灯光：灯效 %s · 亮度 %s · 色相 %s · 饱和 %s · 速度 %s" % (
             self.state.effect, self.state.val, self.state.hue,
@@ -2373,6 +2662,39 @@ class App(tk.Tk):
         self._refresh_swatch()
         self.queue_state(val=v)
 
+    def _set_state_dirty(self, dirty):
+        self._state_dirty = bool(dirty)
+        label = getattr(self, "state_dirty_lbl", None)
+        if label is not None:
+            if self.dev is None:
+                label.configure(text="")
+            elif self._state_dirty:
+                label.configure(text="● 有待应用修改", fg=WARN)
+            else:
+                label.configure(text="已与设备同步", fg=FG_FAINT)
+
+        apply_btn = getattr(self, "apply_state_btn", None)
+        if apply_btn is not None:
+            apply_btn.set_enabled(self.dev is not None and self._state_dirty)
+        save_btn = getattr(self, "save_btn", None)
+        if save_btn is not None:
+            save_btn.set_enabled(self.dev is not None)
+
+    def _on_live_toggle(self):
+        if self.live_var.get():
+            if self._pending:
+                self.log("实时下发已开启，正在应用待提交修改", "info")
+                if self._pending_job is None:
+                    self._pending_job = self.after(40, self._flush)
+            else:
+                self.log("实时下发已开启")
+            return
+        if self._state_dirty:
+            self.log("实时下发已关闭，修改会保留到「应用到设备」或「保存到固件」",
+                     "info")
+        else:
+            self.log("实时下发已关闭")
+
     # ==================================================================
     # 预设方案（保存 / 切换 / 管理一整套灯光）
     # ==================================================================
@@ -2435,6 +2757,15 @@ class App(tk.Tk):
         data["zone_mode"] = self._zone_mode.get()
         data["zone_colors"] = {k: list(v) for k, v in self._zone_colors.items()}
         data["zone_val"] = dict(self._zone_val)
+
+        known_leds = {}
+        for led in self.leds:
+            if led.global_index not in self._led_known:
+                continue
+            known_leds[str(led.global_index)] = list(
+                self._led_colors[led.index])
+        if known_leds:
+            data["led_colors"] = known_leds
 
         strips = []
         for s in self._amk_strips():
@@ -2641,6 +2972,8 @@ class App(tk.Tk):
             for z, v in (data.get("zone_val") or {}).items():
                 if z in self._zone_val:
                     self._zone_val[z] = int(v)
+            for z in self._zone_capable:
+                self.push_zone(z)
             applied.append("分区")
         except Exception as exc:
             failed.append("分区（%s）" % exc)
@@ -2654,13 +2987,38 @@ class App(tk.Tk):
                 if data.get(k) is not None:
                     changes[k] = data[k]
             if changes:
-                self.state = self.dev.set_all(**changes)
-                self._sync_widgets()
-                applied.append("轴灯")
+                if self.queue_state(**changes) \
+                        and self.apply_state_to_device(quiet=True):
+                    applied.append("轴灯")
         except Exception as exc:
             failed.append("轴灯（%s）" % exc)
 
-        # 3) 配件灯：逐条灯条的灯效 / 颜色 / 亮度 / 速度
+        # 3) 已知的逐键颜色：未知灯位不会以默认黑色写回设备
+        try:
+            led_data = data.get("led_colors") or {}
+            if led_data:
+                by_global = {led.global_index: led for led in self.leds}
+                changed = set()
+                for raw_index, colour in led_data.items():
+                    try:
+                        global_index = int(raw_index)
+                    except (TypeError, ValueError):
+                        continue
+                    led = by_global.get(global_index)
+                    if led is None or not isinstance(colour, (list, tuple)) \
+                            or len(colour) != 3:
+                        continue
+                    hsv = tuple(int(x) for x in colour)
+                    self._led_colors[led.index] = hsv
+                    self._led_known.add(global_index)
+                    changed.add(global_index)
+                if changed:
+                    self.push_leds(changed=changed)
+                    applied.append("逐键颜色×%d" % len(changed))
+        except Exception as exc:
+            failed.append("逐键颜色（%s）" % exc)
+
+        # 4) 配件灯：逐条灯条的灯效 / 颜色 / 亮度 / 速度
         try:
             strips_data = data.get("strips") or []
             if strips_data:
@@ -2694,6 +3052,8 @@ class App(tk.Tk):
             self.log("已应用方案「%s」：%s" % (name, "、".join(applied)), "ok")
         if failed:
             self.log("方案「%s」部分未生效：%s" % (name, "；".join(failed)), "warn")
+        self._sync_widgets()
+        self.refresh_zone_panel()
         if not silent:
             self._draw_preset_list()
         return bool(applied)
@@ -2769,7 +3129,40 @@ class App(tk.Tk):
         if backend not in mapping:
             self.log("当前后端没有该预设", "warn")
             return
-        eff = mapping[backend]
+        if backend == "amk":
+            axis_eff = mapping.get("amk")
+            strip_eff = mapping.get("strip")
+            applied = []
+            if axis_eff is not None:
+                ids = getattr(self, "_effect_ids", [])
+                if ids and axis_eff in ids:
+                    self.effect_combo.current(ids.index(axis_eff))
+                if self.queue_state(effect=axis_eff) \
+                        and self.apply_state_to_device(quiet=True):
+                    applied.append("轴灯")
+            if strip_eff is not None:
+                strips = self._amk_strips()
+                done = 0
+                for strip in strips:
+                    try:
+                        if self.dev.set_strip_mode(strip, strip_eff):
+                            done += 1
+                    except Exception as exc:
+                        self.log("灯条 %d 写入失败: %s"
+                                 % (strip.index + 1, exc), "err")
+                if done:
+                    self._refresh_strip_bar()
+                    applied.append("配件灯 %d/%d 条" % (done, len(strips)))
+            if applied:
+                self.log("快捷预设已应用：%s" % "、".join(applied), "ok")
+            else:
+                self.log("当前固件没有可用的快捷预设通道", "warn")
+            return
+
+        eff = mapping.get(backend)
+        if eff is None:
+            self.log("当前后端不支持这个快捷预设", "warn")
+            return
         ids = getattr(self, "_effect_ids", [])
         if ids and eff in ids:
             self.effect_combo.current(ids.index(eff))
@@ -2778,35 +3171,73 @@ class App(tk.Tk):
     # ---- 状态下发（节流） -------------------------------------------
     def queue_state(self, **changes):
         if self.dev is None or self.dev.lighting_backend is None:
-            return
+            return False
         if self.state is None:
             try:
                 self.state = self.dev.read_lighting()
-            except Exception:
-                return
+            except Exception as exc:
+                self.log("读取当前灯光状态失败: %s" % exc, "err")
+                return False
         for key, value in changes.items():
             setattr(self.state, key, value)
+        if self._pending is None:
+            self._pending = {}
+        self._pending.update(changes)
+        self._set_state_dirty(True)
         if self.live_var.get():
-            if self._pending is None:
-                self._pending = {}
-            self._pending.update(changes)
             if self._pending_job is None:
                 self._pending_job = self.after(40, self._flush)
         self.draw_layout()
+        return True
 
     def _flush(self):
         self._pending_job = None
-        pending = self._pending or {}
-        self._pending = None
-        if not pending or self.dev is None:
-            return
+        self.apply_state_to_device(quiet=True)
+
+    def apply_state_to_device(self, quiet=False):
+        """把全局灯光草稿提交到设备，但不请求固件持久化。"""
+        if self.dev is None or self.dev.lighting_backend is None:
+            self.log("尚未连接可写灯光后端", "warn")
+            return False
+
+        if self._pending_job is not None:
+            try:
+                self.after_cancel(self._pending_job)
+            except Exception:
+                pass
+            self._pending_job = None
+        pending = dict(self._pending or {})
+        if not pending:
+            if not self._state_dirty:
+                if not quiet:
+                    self.log("没有待应用的全局灯光修改", "info")
+                return True
+            if self.state is None:
+                self.log("没有可提交的全局灯光状态", "err")
+                return False
+            pending = {
+                key: getattr(self.state, key)
+                for key in ("effect", "speed", "hue", "sat", "val")
+            }
+
         try:
             self.state = self.dev.set_all(**pending)
         except Exception as exc:
-            self.log("下发失败: %s" % exc, "err")
+            self.log("应用全局灯光失败: %s" % exc, "err")
+            self._set_state_dirty(True)
+            return False
+
+        self._pending = None
+        self._set_state_dirty(False)
+        self._sync_widgets()
+        if not quiet:
+            self.log("全局灯光已应用到设备", "ok")
+        return True
 
     def save_to_device(self):
         if self.dev is None:
+            return
+        if self._state_dirty and not self.apply_state_to_device():
             return
         try:
             ok, resp = self.dev.save()
@@ -2838,11 +3269,17 @@ class App(tk.Tk):
                 self._pushed = {}
             try:
                 target = {}
+                allowed = (set(self._led_known)
+                           if changed is None else set(changed))
+                if changed is None and not allowed:
+                    self.log("还没有已知的逐键颜色，请先点按、填充或从键盘读取",
+                             "warn")
+                    return
                 for led in self.leds:
                     if led.row is None or led.col is None:
                         continue          # 配件灯不走这里
                     gi = led.global_index
-                    if changed is not None and gi not in changed:
+                    if gi not in allowed:
                         continue
                     target[gi] = tuple(self._led_colors[led.index])
                 # 只发与上次推送**不一样**的灯
@@ -2854,6 +3291,7 @@ class App(tk.Tk):
                 if switched:
                     self._pk_custom_on = True
                 self._pushed.update(diff)
+                self._led_known.update(diff)
                 self.log("逐键推送 %d 颗%s"
                          % (ok, "（已切到自定义档）" if switched else ""), "ok")
             except Exception as exc:
@@ -2871,7 +3309,21 @@ class App(tk.Tk):
                     self.effect_combo.current(ids.index(effects.VIALRGB_DIRECT))
                     self.effect_pos.configure(
                         text="%d / %d" % (effects.VIALRGB_DIRECT, ids[-1]))
-            self.dev.vialrgb_push(self._led_colors)
+            if changed is None:
+                sent = self.dev.vialrgb_push(self._led_colors)
+                changed_leds = self.leds
+            else:
+                wanted = set(changed)
+                pairs = [
+                    (led.index, tuple(self._led_colors[led.index]))
+                    for led in self.leds
+                    if led.global_index in wanted
+                ]
+                sent = self.dev.vialrgb_push_pairs(pairs)
+                changed_leds = [
+                    led for led in self.leds if led.global_index in wanted]
+            self._led_known.update(led.global_index for led in changed_leds)
+            self.log("逐键推送 %d 颗灯" % sent, "ok")
         except Exception as exc:
             self.log("逐键推送失败: %s" % exc, "err")
 

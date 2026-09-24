@@ -666,6 +666,7 @@ class Check(tk.Frame):
         self._fg_active = fg_active
         self._hover = False
         self._pressed = False
+        self._enabled = True
 
         self.box = tk.Canvas(self, width=self.SIZE, height=self.SIZE, bg=bg,
                              highlightthickness=0, bd=0, cursor="hand2")
@@ -693,10 +694,14 @@ class Check(tk.Frame):
         self.render()
 
     def _on_press(self, _e=None):
+        if not self._enabled:
+            return
         self._pressed = True
         self.render()
 
     def _on_release(self, _e=None):
+        if not self._enabled:
+            return
         was = self._pressed
         self._pressed = False
         self.render()
@@ -708,6 +713,11 @@ class Check(tk.Frame):
     def render(self):
         s = self.SIZE
         self.box.delete("all")
+        if not self._enabled:
+            round_rect(self.box, 0.5, 0.5, s - 0.5, s - 0.5, 4,
+                       SUBTLE, STROKE, 1)
+            self.label.configure(fg=FG_DIS)
+            return
         on = bool(self.var.get())
         if on:
             fill = ACCENT_PRESS if self._pressed else (
@@ -723,6 +733,17 @@ class Check(tk.Frame):
             fill = "#fdfdfd" if not self._hover else "#f7f7f7"
             round_rect(self.box, 0.5, 0.5, s - 0.5, s - 0.5, 4, fill, edge, 1.4)
             self.label.configure(fg=self._fg)
+
+    def set_enabled(self, on):
+        """置灰 / 恢复，并在置灰时吞掉点击。"""
+        self._enabled = bool(on)
+        self.configure(cursor="hand2" if on else "arrow")
+        self.box.configure(cursor="hand2" if on else "arrow")
+        self.label.configure(cursor="hand2" if on else "arrow")
+        if not on:
+            self._hover = False
+            self._pressed = False
+        self.render()
 
 
 class Entry(tk.Frame):
