@@ -1,9 +1,24 @@
 # 可选依赖。
 #
-# 本程序在 Windows 上 **不需要任何第三方依赖**：没有 hidapi 时会自动使用
-# 内置的 ctypes 版 HID 后端（直接调 SetupAPI / hid.dll）。
-# 装上 hidapi 只是让底层换成官方库，行为更标准：
+# 界面需要的 Flask 已经随程序放在 vendor/ 目录里了，**不需要 pip 安装**，
+# 只要机器上有 Python 3.6+ 就能双击 run.bat 直接跑（离线也可以）。
+# 所以下面两条都不是必需的。
 #
-#     pip install hidapi
+#
+# 1) Flask —— 仅当 vendor/ 目录缺失或损坏时才需要手动装一份。
+#    main.py 会优先用 vendor/ 里的那份，系统装的只是后备。
+#
+#        pip install "flask>=1.1,<2"
+#
+#    （Python 3.6 只能用 Flask 1.x；3.7+ 可以装更新的版本。）
+#    命令行模式 python mvl.py 完全不依赖 Flask。
+#
+flask>=1.1,<2
+
+# 2) HID 后端。不装也能跑：没有 hidapi 时会自动使用内置的 ctypes 版
+#    HID 后端（直接调 SetupAPI / hid.dll）。装上只是让底层换成官方库，
+#    行为更标准。
+#
+#        pip install hidapi
 #
 hidapi>=0.14 ; platform_system == "Windows"

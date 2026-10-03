@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>vial-matrix-light · 键盘灯光调整</title>
+    <script>
+      // 首屏前就定好主题，避免浅色闪一下再变深色
+      (function () {
+        try {
+          var saved = localStorage.getItem('vml.theme');
+          if (saved !== 'light' && saved !== 'dark') {
+            saved = window.matchMedia &&
+              window.matchMedia('(prefers-color-scheme: dark)').matches
+              ? 'dark' : 'light';
+          }
+          document.documentElement.setAttribute('data-theme', saved);
+        } catch (e) { /* 隐私模式下 localStorage 可能不可用 */ }
+      })();
+    </script>
+    <script type="module" crossorigin src="/static/assets/index-CkMYf27H.js"></script>
+    <link rel="stylesheet" crossorigin href="/static/assets/index-BXlkUei_.css">
+  </head>
+  <body>
+    <div id="root"></div>
+  </body>
+</html>

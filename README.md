@@ -1,11 +1,12 @@
 # vial-matrix-light
 
 Matrix 键盘（Matrix Lab / Faukwaa 等）与各类 Vial 键盘的**灯光调整软件**。
-Python + Tkinter 桌面程序，通过 USB raw HID 直接和键盘通信，实时改灯、可保存。
+本地 Web 应用：Python 后端通过 USB raw HID 直接和键盘通信，浏览器里操作，
+实时改灯、可保存。服务只监听 `127.0.0.1`，数据不出本机。
 
-界面是 **Windows 11 风格（Mica 浅色）**：浅灰底 + 分层圆角卡片 + 天蓝强调色 +
-Segoe UI Variable 字体。控件（按钮 / 滑块 / 分段 / 复选 / 页签）全部自绘，
-没有用 ttk 的默认外观。
+界面是 **双主题的现代 Web UI**（浅色 / 深色，跟随系统或手动切换）：分层圆角卡片 +
+天蓝强调色。前端源码在 `frontend/`（Vite + React + TypeScript），
+构建产物已提交到 `vial_light/webapp/static/`，**日常使用不需要装 Node**。
 
 ![灯光页](samples/ui-light.png)
 
@@ -73,12 +74,28 @@ Segoe UI Variable 字体。控件（按钮 / 滑块 / 分段 / 复选 / 页签�
 python main.py
 ```
 
-要求：Python 3.6+，且该 Python 带 `tkinter`。`run.bat` 会按
-`py -3` → `python` → 常见安装目录 的顺序自动挑选可用解释器。
+启动后会在 `127.0.0.1:8765` 起一个本地 Web 服务，并**自动打开浏览器**
+（不想自动打开就加 `--no-browser`）。这个命令行窗口要一直开着，
+关掉它服务就停了；`Ctrl+C` 结束。
+
+要求：Python 3.6+，**仅此而已** —— 界面依赖的 Flask 已随程序放在 `vendor/`
+目录里，不需要 `pip install`，也不需要联网。
+`run.bat` 会按 `py -3` → `python` → 常见安装目录 的顺序，
+自动挑选第一个能加载本项目的解释器。
+
+> `vendor/` 里是 6 个**纯 Python** 包（flask / werkzeug / jinja2 / click /
+> itsdangerous / markupsafe，共约 1.9 MB），已随源码入库，拷贝到别的机器上
+> 照样能跑。MarkupSafe 的 C 加速扩展**故意不放**（3.6 专用 ABI，换版本会崩），
+> 让它走纯 Python 回退，性能差异对本工具无感。
+> `main.py` 会把 `vendor/` 插到 `sys.path` 最前面，所以即使系统里装过
+> 别的 Flask 版本，也一定用自带的这份。
+
+> 只想用命令行（`mvl.py`）的话更进一步 —— 它连 Flask 都不需要。
 
 > **run.bat 的排错设计**：启动过程中的所有输出（stdout + stderr）都会写进
 > `run.log`，退出码非 0 时会直接把日志打印在窗口里并 `pause`。
 > 所以万一还是起不来，看 `run.bat` 同目录的 `run.log` 就能定位原因。
+> 服务已经起来但浏览器没弹出来时，地址也在 `run.log` 里。
 
 **可选**：想要更标准的底层，可以装官方 hidapi（装不装功能一样）：
 
@@ -88,8 +105,10 @@ install.bat
 python -m pip install --user hidapi
 ```
 
-> 你机器上的 `C:\Program Files\Python36\python.exe` 自带 tkinter（Tk 8.6），
-> 直接 `run.bat` 就能起来。若用 Microsoft Store 版 Python，请改装 python.org 版。
+> 界面是**浏览器页面**，所以只要服务起来了，用哪个浏览器看都行；
+> 前端构建产物已入库，**不需要 Node / npm**。
+> 只有改前端源码时才需要（见 `frontend/`，`npm install` + `npm run build`，
+> 产物直接输出到 `vial_light/webapp/static/`）。
 
 ---
 
@@ -97,13 +116,18 @@ python -m pip install --user hidapi
 
 五个页签：**灯光 / 分区 / 配列 / 逐键 / 信息**。
 
+顶部一行是设备与连接状态：接口下拉、连接 / 断开、**刷新**、以及**主题切换**
+（浅色 / 深色，选择记在浏览器本地）。当前页签也会记住，重新打开还停在原处。
+
+底部是**日志面板**，实时显示设备交互与错误，状态灯会标明事件流是否已连上。
+
 ### 灯光
 - **灯效**：下拉列表，或用「上一档 / 下一档」逐档步进。
   - AMK：固件没有「读取灯效列表」也没有「翻译名称」的接口，所以 1–45 档
     里除了少数能确认的（如 1 = 静态纯色）之外，**只显示「模式 N」** ——
     宁可选一个中性的编号让你自己试，也不给一个看着像样但错误的名字。
   - VialRGB：0–44，用官方 `VIALRGB_EFFECTS` 表映射中英文名。
-- **亮度 / 速度**：Win11 风格的自绘滑块 + 数字框。打开「实时下发」时会节流后自动应用；
+- **亮度 / 速度**：滑块 + 数字输入框。打开「实时下发」时会节流后自动应用；
   关闭后先改本地草稿，点「应用到设备」才写入设备，点「保存到固件」会先应用再请求持久化。
   - AMK：亮度 0–255，速度 0–3（实测超过 3 会被固件夹回）
   - VialRGB：亮度 0–255，速度 0–255
@@ -441,7 +465,7 @@ FASTSET 负载：`07 42 <首颗LED:u16 LE> <数量:u8> (<h><s><v>)×数量`，�
 
 ## 5. 命令行
 
-图形界面不方便时（或想脚本化）用 `mvl.py`：
+界面不方便时（或想脚本化）用 `mvl.py`：
 
 ```bat
 python mvl.py list                    :: 列出 Vial 设备
@@ -501,9 +525,12 @@ python mvl.py strips-restore bk.json        :: 从备份原样写回
 | 副厂板识别不到 | 用顶部「更多」手动挑选接口 |
 | 读到的都是 0 | 固件可能没有照明后端；看「信息」页的探测过程 |
 | 界面起不来 | 看 `run.log`（run.bat 会把所有输出写进去）；或先用 `mvl.py` |
+| `run.bat` 说「No usable Python was found」 | 机器上没装 Python 3，或没加进 PATH。装一个 python.org 版并勾选「Add Python to PATH」，**不用装任何依赖** |
+| 提示「无法加载 Web 界面依赖」 | `vendor/` 目录缺失或损坏了。确认里面有 6 个子目录（flask / werkzeug / jinja2 / click / itsdangerous / markupsafe），或临时 `pip install "flask>=1.1,<2"` |
+| 端口被占 / 开了多个实例 | 服务会从 8765 起自动找空闲端口，实际地址以窗口和 `run.log` 里打印的为准 |
 | 改了灯但重启后还原 | 固件没保存。点「保存到固件」；AMK 通常是即改即存 |
 | **配件灯只有 1–2 档灯效有效，其余没反应** | **这是正常的固件限制，不是 bug。** 本机固件没实现灯条级参数通道（`SET_RGB_PARAM` 回 `0x55`），非自定义档的画面完全由固件自己渲染、无法再改颜色；而本机的效果表与官方源码顺序不保证一致。**要完全可控就用「0 自定义（逐灯上色）」档。** |
-| **静态档下选颜色 / 亮度没用** | 因为静态档不是自定义档 —— 切到「0 自定义」再改色即可（GUI 里点「推送配件灯」会自动切）。 |
+| **静态档下选颜色 / 亮度没用** | 因为静态档不是自定义档 —— 切到「0 自定义」再改色即可（在分区页点「推送配件灯」会自动切）。 |
 | 配件灯点了没反应 | 先看「信息」页的探测过程有没有读到「配件灯条 N 组」。AMK 固件用 `0xFD 0x1B` 读；读到了就能单独控制。若读到但灯卡住不动，用 `strips-mode` / `strips-color` 重写一遍 |
 | **配件灯有几条不亮** | **出厂默认就有 4 条是暗的**（strip 1–4 的 `param=0x80`、`val=0`）。跑 `mvl.py strips-color --hsv 0,255,255 --force` 让 18 颗全亮。 |
 | **按下 RGB_TOG 后像「轴灯 / 配件灯二选一」** | 轴灯在这个固件上**软件关不掉**（`0x81=0`、`(46)=0` 都被改成 1，`0x80` 写被忽略）。所以「有一边黑」只可能是**配件灯本来就暗**（出厂如此）。两者是**完全独立**的两个通道，实测互不干扰；把配件灯点亮后即可两边同时亮。 |
@@ -556,11 +583,13 @@ python mvl.py strips-restore bk.json        :: 从备份原样写回
 
 ```
 vial-matrix-light/
-├── run.bat                 一键启动（自动挑带 tkinter 的 Python，日志写 run.log）
+├── run.bat                 一键启动（自动挑 Python，日志写 run.log）
 ├── install.bat             可选：安装 hidapi
-├── main.py                 GUI 入口（--selftest 自检，含全局异常兜底）
+├── main.py                 入口（--selftest 自检，含全局异常兜底）
 ├── mvl.py                  命令行入口
-├── requirements.txt
+├── requirements.txt        可选项说明（运行其实不需要装任何东西）
+├── vendor/                 自带的第三方依赖（纯 Python，无需 pip 安装）
+│   └── flask/  werkzeug/  jinja2/  click/  itsdangerous/  markupsafe/
 ├── reference/              逆向出来的权威资料（不参与打包）
 │   ├── README.md
 │   ├── strip_backup_faukwaa.json    出厂配件灯快照（可 strips-restore 回写）
@@ -570,14 +599,27 @@ vial-matrix-light/
 │   ├── faukwaa-layout-preview.html  双视图配列预览
 │   └── ui-*.png            界面截图（light / layout / layout-kle / perkey /
 │                           info / zone）
+├── frontend/               前端源码（Vite + React + TypeScript，仅开发需要）
+│   ├── src/
+│   │   ├── App.tsx         应用外壳（五页签 + 主题 + 页签记忆）
+│   │   ├── pages/          灯光 / 分区 / 配列 / 逐键 / 信息 五页
+│   │   ├── components/     滑块 / 分段 / 色条 / 卡片 / 日志面板等
+│   │   ├── lib/            API 封装 / 颜色换算 / 主题
+│   │   ├── store/          SSE 事件订阅 + 快照 Context
+│   │   └── styles.css      双主题 CSS 变量
+│   ├── vite.config.ts      产物输出到 vial_light/webapp/static，/api 代理
+│   └── package.json
 └── vial_light/
     ├── transport.py        HID 层：hidapi 优先，纯 ctypes 兜底
     ├── device.py           协议：VIA / Vial / VialRGB / AMK 标准 + AMK 0xFD 扩展
     ├── effects.py          三套灯效表严格分开（QMK / VialRGB / AMK 配件灯 RL_EFFECT）
     ├── kbdef.py            vial.json 解析（KLE 配列）+ 键码名
     ├── colors.py           HSV/RGB 转换
-    ├── theme.py            Win11 设计系统（Mica 配色 + 自绘控件）
-    └── gui.py              Tkinter 界面（五页签，含分区页与配件灯条栏）
+    ├── presets.py          本地灯光方案
+    └── webapp/             本地 Web 服务
+        ├── server.py       Flask 路由（REST + SSE 事件流）
+        ├── session.py      单设备工作线程 + 快照缓存
+        └── static/         前端构建产物（入库，改前端后 npm run build 重新生成）
 ```
 
 > 关于 `.bat` 文件的坑：`cmd.exe` 在中文 Windows 上默认用 GBK(936) 代码页读
@@ -586,10 +628,8 @@ vial-matrix-light/
 > 命令行无反应」）。本项目的 `run.bat` / `install.bat` 因此统一存为
 > **纯 ASCII + CRLF**，中文说明都放在 README 里。
 
-> 自己写 Tkinter 圆角控件时注意：**不要**给控件子类起 `self._w` / `self._h`
-> 这种属性名 —— `Misc._w` 是 Tkinter 用来存窗口路径名的内部属性，覆盖之后
-> 控件会彻底失效（报 `bad window path name "42"`）。`Misc._options` 同理
-> （它是个方法）。本项目里一律用 `_bw` / `_bh` / `_opts` 之类的前缀避开。
+> 改前端时注意 Vite 的 `base` 必须是 `/static/`：页面由 Flask 的 `/` 路由返回，
+> 而 JS / CSS 由 `/static/` 托管，用默认的 `/` 前缀会导致资源 404。
 
 ---
 

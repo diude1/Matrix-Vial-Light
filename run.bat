@@ -12,9 +12,12 @@ echo ============================================
 echo.
 
 REM ---- 1) Prefer the Windows "py" launcher -------------------------
+REM Flask ships inside vendor\, so any Python 3.6+ works - no pip needed.
+REM The probe below asks the interpreter to do exactly what main.py does:
+REM put vendor\ on sys.path first, then import flask.
 where py >nul 2>&1
 if not errorlevel 1 (
-    py -3 -c "import tkinter" >nul 2>&1
+    py -3 -c "import sys; sys.path.insert(0, r'%~dp0vendor'); import flask" >nul 2>&1
     if not errorlevel 1 (
         set "PYTHON_EXE=py"
         set "PYTHON_ARGS=-3"
@@ -26,7 +29,7 @@ if not errorlevel 1 (
 REM ---- 2) Fall back to "python" on PATH ---------------------------
 where python >nul 2>&1
 if not errorlevel 1 (
-    python -c "import tkinter" >nul 2>&1
+    python -c "import sys; sys.path.insert(0, r'%~dp0vendor'); import flask" >nul 2>&1
     if not errorlevel 1 (
         set "PYTHON_EXE=python"
         echo [1/3] Using interpreter: python
@@ -45,7 +48,7 @@ for %%D in (
         for /f "delims=" %%P in ('dir /b /o-n "%%~D\Python3*" 2^>nul') do (
             if exist "%%~D\%%P\python.exe" (
                 if not defined PYTHON_EXE (
-                    "%%~D\%%P\python.exe" -c "import tkinter" >nul 2>&1
+                    "%%~D\%%P\python.exe" -c "import sys; sys.path.insert(0, r'%~dp0vendor'); import flask" >nul 2>&1
                     if not errorlevel 1 set "PYTHON_EXE=%%~D\%%P\python.exe"
                 )
             )
@@ -57,20 +60,26 @@ if defined PYTHON_EXE (
     goto :launch
 )
 
-echo [X] No Python with tkinter was found.
+echo [X] No usable Python was found.
 echo.
-echo     Install Python 3 from https://www.python.org/downloads/
-echo     and make sure "tcl/tk and IDLE" is checked during setup.
+echo     This program needs Python 3.6 or newer. Flask itself is already
+echo     bundled in the vendor folder, so there is nothing to install.
 echo.
-echo     A command line version works without tkinter:
+echo     Get Python 3 from https://www.python.org/downloads/
+echo     Remember to tick "Add Python to PATH" during setup.
+echo.
+echo     A command line version works without the web interface:
 echo         python mvl.py --help
 echo.
 pause
 exit /b 2
 
 :launch
-echo [2/3] Starting GUI...
+echo [2/3] Starting web server (browser will open)...
 echo       Log: %LOGFILE%
+echo.
+echo       Keep this window open while using the interface.
+echo       Press Ctrl+C to stop.
 echo.
 
 REM Launch and capture every stream so failures are never silent.
@@ -91,8 +100,8 @@ if not "%RC%"=="0" (
     echo.
     pause
 ) else (
-    echo [3/3] Window closed normally.
-    echo       If nothing appeared on screen, check %LOGFILE%
+    echo [3/3] Server stopped normally.
+    echo       If the browser never opened, the address is in %LOGFILE%
 )
 
 endlocal

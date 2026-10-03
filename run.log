@@ -1,0 +1,55 @@
+vial-matrix-light 已启动：http://127.0.0.1:8765/
+按 Ctrl+C 结束。
+ * Serving Flask app "vial_light.webapp.server" (lazy loading)
+ * Environment: production
+   WARNING: This is a development server. Do not use it in a production deployment.
+   Use a production WSGI server instead.
+ * Debug mode: off
+ * Running on http://127.0.0.1:8765/ (Press CTRL+C to quit)
+127.0.0.1 - - [03/Oct/2026 18:43:54] "[37mGET / HTTP/1.1[0m" 200 -
+127.0.0.1 - - [03/Oct/2026 18:43:54] "[37mGET /static/assets/index-BXlkUei_.css HTTP/1.1[0m" 200 -
+127.0.0.1 - - [03/Oct/2026 18:43:54] "[37mGET /static/assets/index-CkMYf27H.js HTTP/1.1[0m" 200 -
+127.0.0.1 - - [03/Oct/2026 18:43:55] "[37mGET /api/logs HTTP/1.1[0m" 200 -
+127.0.0.1 - - [03/Oct/2026 18:43:55] "[37mGET /api/state HTTP/1.1[0m" 200 -
+127.0.0.1 - - [03/Oct/2026 18:43:55] "[37mGET /api/events HTTP/1.1[0m" 200 -
+127.0.0.1 - - [03/Oct/2026 18:43:55] "[37mGET /favicon.ico HTTP/1.1[0m" 204 -
+127.0.0.1 - - [03/Oct/2026 18:43:55] "[37mGET /api/devices?all=0 HTTP/1.1[0m" 200 -
+127.0.0.1 - - [03/Oct/2026 18:44:29] "[37mPOST /api/connect HTTP/1.1[0m" 200 -
+127.0.0.1 - - [03/Oct/2026 18:44:29] "[37mGET /api/effects HTTP/1.1[0m" 200 -
+127.0.0.1 - - [03/Oct/2026 18:44:30] "[37mGET /api/effects HTTP/1.1[0m" 200 -
+127.0.0.1 - - [03/Oct/2026 18:44:41] "[37mPOST /api/strip/led HTTP/1.1[0m" 200 -
+127.0.0.1 - - [03/Oct/2026 18:44:44] "[37mPOST /api/strip/led HTTP/1.1[0m" 200 -
+127.0.0.1 - - [03/Oct/2026 18:44:52] "[37mPOST /api/strip/led HTTP/1.1[0m" 200 -
+127.0.0.1 - - [03/Oct/2026 18:44:55] "[37mPOST /api/strip/led HTTP/1.1[0m" 200 -
+127.0.0.1 - - [03/Oct/2026 18:45:02] "[37mPOST /api/strip/led HTTP/1.1[0m" 200 -
+127.0.0.1 - - [03/Oct/2026 18:45:05] "[37mPOST /api/strip/led HTTP/1.1[0m" 200 -
+127.0.0.1 - - [03/Oct/2026 19:23:17] "[37mPOST /api/strip/led HTTP/1.1[0m" 200 -
+127.0.0.1 - - [03/Oct/2026 19:23:44] "[37mPOST /api/strip/led HTTP/1.1[0m" 200 -
+127.0.0.1 - - [03/Oct/2026 19:23:53] "[37mPOST /api/strip/led HTTP/1.1[0m" 200 -
+127.0.0.1 - - [03/Oct/2026 19:24:10] "[37mPOST /api/strip/led HTTP/1.1[0m" 200 -
+127.0.0.1 - - [03/Oct/2026 19:24:14] "[37mPOST /api/strip/led HTTP/1.1[0m" 200 -
+127.0.0.1 - - [03/Oct/2026 19:24:17] "[37mPOST /api/strip/led HTTP/1.1[0m" 200 -
+127.0.0.1 - - [03/Oct/2026 19:24:20] "[37mPOST /api/strip/led HTTP/1.1[0m" 200 -
+127.0.0.1 - - [03/Oct/2026 19:24:23] "[37mPOST /api/strip/led HTTP/1.1[0m" 200 -
+127.0.0.1 - - [03/Oct/2026 19:24:26] "[37mPOST /api/strip/led HTTP/1.1[0m" 200 -
+127.0.0.1 - - [03/Oct/2026 19:24:28] "[37mPOST /api/strip/led HTTP/1.1[0m" 200 -
+127.0.0.1 - - [03/Oct/2026 19:24:31] "[37mPOST /api/strip/led HTTP/1.1[0m" 200 -
+127.0.0.1 - - [03/Oct/2026 19:24:34] "[37mPOST /api/strip/led HTTP/1.1[0m" 200 -
+127.0.0.1 - - [03/Oct/2026 19:24:45] "[37mPOST /api/strip/led HTTP/1.1[0m" 200 -
+127.0.0.1 - - [03/Oct/2026 19:24:47] "[37mPOST /api/strip/led HTTP/1.1[0m" 200 -
+127.0.0.1 - - [03/Oct/2026 19:24:53] "[37mPOST /api/strip/led HTTP/1.1[0m" 200 -
+127.0.0.1 - - [03/Oct/2026 19:25:04] "[37mPOST /api/strip/led HTTP/1.1[0m" 200 -
+127.0.0.1 - - [03/Oct/2026 19:25:06] "[37mPOST /api/strip/led HTTP/1.1[0m" 200 -
+127.0.0.1 - - [03/Oct/2026 19:25:17] "[37mPOST /api/strip/led HTTP/1.1[0m" 200 -
+127.0.0.1 - - [03/Oct/2026 19:25:21] "[37mPOST /api/strip/led HTTP/1.1[0m" 200 -
+127.0.0.1 - - [03/Oct/2026 19:26:58] "[37mPOST /api/strip/led HTTP/1.1[0m" 200 -
+127.0.0.1 - - [03/Oct/2026 19:26:58] "[37mPOST /api/strip/led HTTP/1.1[0m" 200 -
+127.0.0.1 - - [03/Oct/2026 19:27:02] "[37mPOST /api/strip/led HTTP/1.1[0m" 200 -
+127.0.0.1 - - [03/Oct/2026 19:27:02] "[37mPOST /api/strip/led HTTP/1.1[0m" 200 -
+127.0.0.1 - - [03/Oct/2026 19:27:06] "[37mPOST /api/strip/led HTTP/1.1[0m" 200 -
+127.0.0.1 - - [03/Oct/2026 19:27:06] "[37mPOST /api/strip/led HTTP/1.1[0m" 200 -
+127.0.0.1 - - [03/Oct/2026 19:27:14] "[37mPOST /api/presets/apply HTTP/1.1[0m" 200 -
+127.0.0.1 - - [03/Oct/2026 19:27:17] "[37mPOST /api/presets/apply HTTP/1.1[0m" 200 -
+127.0.0.1 - - [03/Oct/2026 19:27:27] "[37mPOST /api/presets/apply HTTP/1.1[0m" 200 -
+127.0.0.1 - - [03/Oct/2026 19:27:37] "[37mPOST /api/presets/apply HTTP/1.1[0m" 200 -
+127.0.0.1 - - [03/Oct/2026 19:27:41] "[37mPOST /api/presets/apply HTTP/1.1[0m" 200 -

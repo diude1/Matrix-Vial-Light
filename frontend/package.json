@@ -1,0 +1,23 @@
+{
+  "name": "vial-matrix-light-frontend",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "vial-matrix-light 的 Web 前端（Vite + React + TypeScript）。构建产物直接落到 ../vial_light/webapp/static，由 Flask 托管。",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^4.3.4",
+    "typescript": "~5.6.3",
+    "vite": "^5.4.11"
+  }
+}
