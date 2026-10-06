@@ -693,6 +693,13 @@ export function PerKeyPage() {
           当前画笔色 {hsvHex(paint)}
           {pk?.custom ? '　·　当前已在自定义档' : ''}
         </div>
+        {isAmk ? (
+          <div className="notice warn" style={{ marginTop: 8 }}>
+            若Esc / Tab / Shift / Ctrl 等功能区显示的颜色和别处不一致：
+            这是固件在切换灯效档后残留的脏状态，<b>拔插一次 USB 数据线即可恢复</b>
+            （灯光状态存在固件 RAM 里，只有断电能清掉，切灯效档修不好）。
+          </div>
+        ) : null}
       </Card>
     </div>
   );
