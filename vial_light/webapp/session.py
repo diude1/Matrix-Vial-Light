@@ -29,6 +29,7 @@ import traceback
 
 from .. import effects
 from .. import kbdef
+from .. import keycodes
 from .. import presets as presets_mod
 from ..colors import clamp, hsv_to_hex
 from ..device import AmkStripLed, VialDevice, ZONE_LABELS, ZONES
@@ -101,6 +102,9 @@ class DeviceSession(object):
         self.led_known = set()
         self._pushed = {}
         self.perkey_custom = False
+        # (row, col) -> KLE 物理几何的缓存；换设备 / 重读配列后必须清空
+        self._led_geom_cache = None
+        self._led_geom_missing = 0
 
         # --- 配列 / 信息 ---
         self.layout = None
@@ -296,18 +300,58 @@ class DeviceSession(object):
         except Exception:
             return ""
 
+    def _led_geometry_map(self):
+        """``(row, col) -> (x, y, w, h, r, rx, ry, label, keyname)`` 的 KLE 物理几何。
+
+        逐键页的灯位**必须用真实键位几何**，不能用矩阵行列 —— 矩阵电气顺序
+        是打乱的（``x=-5`` / ``y=-2.75`` 这类越界偏移），按行列画出来和实物
+        对不上。这里按 (row, col) 把每颗灯挂到键盘定义解析出的物理键上。
+
+        固件键位图（``DYNAMIC_KEYMAP_GET_KEYCODE``）的读数在
+        :meth:`_read_key_labels` 里已带进 ``layout``，这里直接复用。
+        """
+        if self._led_geom_cache is not None:
+            return self._led_geom_cache
+        out = {}
+        kle = (self.layout or {}).get("kle") or {}
+        for k in kle.get("keys") or []:
+            if k.get("row") is None or k.get("col") is None:
+                continue
+            out[(k["row"], k["col"])] = (
+                k["x"], k["y"], k["w"], k["h"],
+                k.get("r") or 0, k.get("rx") or 0, k.get("ry") or 0,
+                k.get("label") or "", k.get("keyname") or "",
+            )
+        self._led_geom_cache = out
+        return out
+
     def _perkey_dict(self):
         dev = self._dev
         if dev is None:
             return {"supported": False, "custom": False, "leds": [],
                     "colors": [], "known": [], "count": 0}
+        geom = self._led_geometry_map()
         leds = []
+        missing = 0
         for led in self.leds:
+            g = None
+            if led.row is not None and led.col is not None:
+                g = geom.get((led.row, led.col))
+            if g is None:
+                missing += 1
             leds.append({
                 "i": led.index,
                 "g": led.global_index,
-                "x": led.x,
-                "y": led.y,
+                # 有物理几何就用它；没有就退回矩阵行列，别让灯凭空消失
+                "x": g[0] if g else led.x,
+                "y": g[1] if g else led.y,
+                "w": g[2] if g else 1.0,
+                "h": g[3] if g else 1.0,
+                "r": g[4] if g else 0.0,
+                "rx": g[5] if g else 0.0,
+                "ry": g[6] if g else 0.0,
+                "label": g[7] if g else "",
+                "keyname": g[8] if g else "",
                 "row": led.row,
                 "col": led.col,
                 "zone": led.zone,
@@ -472,6 +516,8 @@ class DeviceSession(object):
         self.led_known = set()
         self._pushed = {}
         self.perkey_custom = False
+        self._led_geom_cache = None
+        self._led_geom_missing = 0
         self.layout = None
 
     def _describe(self):
@@ -1092,13 +1138,18 @@ class DeviceSession(object):
             self.layout = None
             return None
         montage = kbdef.layout_looks_montage(kle)
+        # 键位功能码 -> 显示缩写（一次读，全布局共用）
+        labels = self._read_key_labels(grid, kle)
+        # 几何缓存必须在这里失效：定义可能变了（换线 / 重读 / 回滚出厂）
+        self._led_geom_cache = None
         self.layout = {
             "name": defn.get("name") or "",
             "matrix": defn.get("matrix") or {},
-            "kle": self._layout_json(kle),
-            "grid": self._layout_json(grid),
+            "kle": self._layout_json(kle, labels),
+            "grid": self._layout_json(grid, labels),
             "montage": montage,
             "key_count": len(kle),
+            "keycodes": self._keycode_state,
             "warn": (
                 "旋转（r / rx / ry）已按 KLE 规范还原，但这把键盘的定义把配列"
                 "拆成了 %d 个区块，按 KLE 累加会把键盘拉成长条 —— 要准确对照"
@@ -1108,14 +1159,60 @@ class DeviceSession(object):
         }
         return self.layout
 
+    def _read_key_labels(self, grid, kle):
+        """读第 0 层的键位功能码，返回 ``{"row,col": (短标签, 全名)}``。
+
+        用的是 ``DYNAMIC_KEYMAP_GET_KEYCODE (0x04)`` —— 和官网「键位」页
+        读键位图走的是**同一条命令**，所以显示的键名与官网一致。
+
+        必须**在工作线程内**调用（走 HID I/O）。读不到就返回空 dict，
+        前端会自动退回纯坐标显示，不影响排障。
+        """
+        out = {}
+        self._keycode_state = {"ok": 0, "total": 0, "supported": False}
+        dev = self._dev
+        if dev is None:
+            return out
+        cells = set(grid.mapped or set())
+        for k in kle.keys:
+            if k.row is not None and k.col is not None:
+                cells.add((k.row, k.col))
+        cells = sorted(cells)
+        if not cells:
+            return out
+        self._keycode_state["total"] = len(cells)
+        dev.set_io_profile(fast=True)
+        for row, col in cells:
+            try:
+                code = dev.get_keycode(0, row, col)
+            except Exception:
+                continue
+            if not code:
+                continue
+            short, full = keycodes.keycode_label(code)
+            if short:
+                out["%d,%d" % (row, col)] = [short, full]
+                self._keycode_state["ok"] += 1
+        self._keycode_state["supported"] = bool(out)
+        if out:
+            self.log("已读取 %d/%d 个键位名（矩阵网格与物理配列都会显示）"
+                     % (self._keycode_state["ok"], len(cells)), "ok")
+        return out
+
     @staticmethod
-    def _layout_json(layout):
+    def _layout_json(layout, labels=None):
+        labels = labels or {}
         keys = []
         for k in layout.keys:
+            pair = None
+            if k.row is not None and k.col is not None:
+                pair = labels.get("%d,%d" % (k.row, k.col))
             keys.append({
                 "x": k.x, "y": k.y, "w": k.w, "h": k.h,
                 "row": k.row, "col": k.col,
                 "r": k.r, "rx": k.rx, "ry": k.ry,
+                "label": pair[0] if pair else "",
+                "keyname": pair[1] if pair else "",
             })
         return {
             "min_x": layout.min_x, "min_y": layout.min_y,

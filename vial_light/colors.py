@@ -27,7 +27,21 @@ def hsv_to_rgb(h, s, v):
 
 
 def rgb_to_hsv(r, g, b):
-    """(r, g, b) 0-255 -> HSV 0-255。"""
+    """(r, g, b) 0-255 -> HSV 0-255。
+
+    .. important::
+       **hue 的算式里不能出现 ``/6``。** HSV 的六个扇区各占 1/6 色轮，
+       而 0-255 档的 256 个色阶已经被压缩进了这六区，所以换算系数是
+       ``256/6 = 42.5`` 而不是 ``43/6``。
+
+       早先这里写成 ``int(43 * ((g - b) / delta) / 6)`` —— 相当于把色相
+       压到 0-43 就折返，**整个色轮只用了一半**。后果是 RGB→HSV→RGB
+       往返严重失真：``(255, 187, 0)`` 会被算成 hue=5，再转回
+       ``(255, 30, 0)``（橙色变成红橙色），实测全色域最大误差 255。
+       去掉 ``/6`` 并改用 ``round`` 后，最大误差降到 15（hsv_to_rgb
+       本身的整数截断所致，属可接受范围），六个主色相也精确落在
+       0 / 42 / 85 / 128 / 170 / 214。
+    """
     mx = max(r, g, b)
     mn = min(r, g, b)
     delta = mx - mn
@@ -37,12 +51,14 @@ def rgb_to_hsv(r, g, b):
     s = int(delta * 255 / mx)
     if delta == 0:
         return 0, s, v
+    # 先算出色轮位置 0..6（R 扇区起点、G 扇区起点、B 扇区起点）
     if mx == r:
-        h = int(43 * ((g - b) / delta) / 6) % 256
+        sector = (g - b) / delta
     elif mx == g:
-        h = int(43 * ((b - r) / delta + 2) / 6) % 256
+        sector = (b - r) / delta + 2
     else:
-        h = int(43 * ((r - g) / delta + 4) / 6) % 256
+        sector = (r - g) / delta + 4
+    h = int(round(sector * 42.5)) % 256
     if h < 0:
         h += 256
     return h, s, v

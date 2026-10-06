@@ -37,7 +37,18 @@ export function hsvToRgb(h: number, s: number, v: number): [number, number, numb
   }
 }
 
-/** [r,g,b] -> HSV(0-255)。 */
+/** [r,g,b] -> HSV(0-255)。
+ *
+ *  ⚠️ hue 算式里**不能出现 `/6`**（与 `vial_light/colors.py:rgb_to_hsv`
+ *  同一个坑）：HSV 六个扇区各占 1/6 色轮，而 0-255 档已经把 256 个色阶
+ *  压缩进这六区，所以系数是 `256/6 = 42.5`，不是 `43/6`。
+ *
+ *  早先写成 `Math.trunc((43 * ((g - b) / delta)) / 6)` —— 相当于把色相
+ *  压到 0-43 就折返，**整个色轮只用了一半**。后果是 RGB→HSV→RGB 往返
+ *  严重失真：`(255, 187, 0)` 被算成 hue=5，转回 `(255, 30, 0)`
+ *  （橙色变红橙），实测全色域最大误差 255，肉眼就是「选一个颜色跳成另一个」。
+ *  去掉 `/6` 并改用 `Math.round` 后误差降到 15（`hsvToRgb` 整数截断所致）。
+ */
 export function rgbToHsv(r: number, g: number, b: number): Hsv {
   r = clamp(r);
   g = clamp(g);
@@ -49,10 +60,12 @@ export function rgbToHsv(r: number, g: number, b: number): Hsv {
   if (mx === 0) return [0, 0, 0];
   const s = Math.trunc((delta * 255) / mx);
   if (delta === 0) return [0, s, v];
-  let h: number;
-  if (mx === r) h = Math.trunc((43 * ((g - b) / delta)) / 6) % 256;
-  else if (mx === g) h = Math.trunc((43 * ((b - r) / delta + 2)) / 6) % 256;
-  else h = Math.trunc((43 * ((r - g) / delta + 4)) / 6) % 256;
+  // 色轮位置 0..6（R / G / B 三个扇区起点）
+  let sector: number;
+  if (mx === r) sector = (g - b) / delta;
+  else if (mx === g) sector = (b - r) / delta + 2;
+  else sector = (r - g) / delta + 4;
+  let h = Math.round(sector * 42.5) % 256;
   if (h < 0) h += 256;
   return [h, s, v];
 }

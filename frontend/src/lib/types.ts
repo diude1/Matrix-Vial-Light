@@ -175,8 +175,19 @@ export interface PerKeyLed {
   i: number;
   /** 固件真实全局灯号 */
   g: number;
+  /** 物理键位坐标（KLE 键盘单位），不是矩阵行列 */
   x: number;
   y: number;
+  /** 键帽尺寸（宽键如 Backspace 是 2×1） */
+  w: number;
+  h: number;
+  /** 旋转角（度，0 表示不转） */
+  r: number;
+  rx: number;
+  ry: number;
+  /** 物理键名缩写 / 官方键名（读不到时为空串） */
+  label: string;
+  keyname: string;
   row: number | null;
   col: number | null;
   zone: ZoneId;
@@ -205,6 +216,10 @@ export interface LayoutKey {
   r: number;
   rx: number;
   ry: number;
+  /** 物理键名缩写（Esc / Tab / A…）。读不到键位图时为空串。 */
+  label: string;
+  /** 官方完整键名（KC_ESCAPE…），用于 tooltip。 */
+  keyname: string;
 }
 
 export interface LayoutView {
@@ -218,6 +233,13 @@ export interface LayoutView {
   mapped: [number, number][];
 }
 
+/** 键位功能码读取情况（用于提示"为什么没显示键名"）。 */
+export interface KeycodeState {
+  ok: number;
+  total: number;
+  supported: boolean;
+}
+
 export interface LayoutInfo {
   name: string;
   matrix: { rows?: number; cols?: number };
@@ -225,6 +247,7 @@ export interface LayoutInfo {
   grid: LayoutView;
   montage: boolean;
   key_count: number;
+  keycodes: KeycodeState;
   warn: string;
 }
 

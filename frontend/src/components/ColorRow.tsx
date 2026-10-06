@@ -49,6 +49,16 @@ export function ColorRow({ hsv, disabled, onPick, onPickNow }: ColorRowProps) {
     if (addCustom(hsv)) logLocal('ok', `已把 ${current} 存进自定义色`);
   };
 
+  /** 删自定义色前必须确认 —— 删了就没了，且没有撤销。 */
+  const onDelete = (idx: number, hex: string) => {
+    if (!window.confirm(`删除自定义色 ${hex}？\n删除后无法恢复。`)) {
+      logLocal('info', `已取消删除 ${hex}`);
+      return;
+    }
+    removeCustom(idx);
+    logLocal('info', `已删除自定义色 ${hex}`);
+  };
+
   return (
     <div className="color-row">
       <input
@@ -105,12 +115,11 @@ export function ColorRow({ hsv, disabled, onPick, onPickNow }: ColorRowProps) {
               <button
                 type="button"
                 className="dot-del"
-                title="删除这个自定义色"
+                title="删除这个自定义色（会先问一次）"
                 disabled={disabled}
                 onClick={(ev) => {
                   ev.stopPropagation();
-                  removeCustom(idx);
-                  logLocal('info', `已删除自定义色 ${hex}`);
+                  onDelete(idx, hex);
                 }}
               >
                 ×

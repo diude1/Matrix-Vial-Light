@@ -9,6 +9,7 @@ import { actGet, actPost, logLocal } from '../lib/api';
 import type { EffectOption, Hsv } from '../lib/types';
 import { Card } from '../components/Card';
 import { ColorRow } from '../components/ColorRow';
+import { CurrentColor } from '../components/CurrentColor';
 import { HueStrip } from '../components/HueStrip';
 import { Slider } from '../components/Slider';
 import { useSession } from '../store/useSession';
@@ -189,6 +190,17 @@ export function LightPage() {
             disabled={!connected}
             onPick={() => undefined}
             onPickNow={pickHsv}
+          />
+        </div>
+
+        <div className="btn-row" style={{ marginTop: 10 }}>
+          <span className="field-label">当前颜色</span>
+          <CurrentColor
+            hsv={light ? [light.hue, light.sat, light.val] : [0, 0, 0]}
+            disabled={!connected}
+            onCommit={(next) => onCommit({
+              hue: next[0], sat: next[1], val: next[2],
+            })}
           />
         </div>
       </Card>

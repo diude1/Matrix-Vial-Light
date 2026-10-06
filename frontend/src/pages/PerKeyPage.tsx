@@ -8,7 +8,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { actPost, logLocal } from '../lib/api';
-import { hsvHex, hsvToHex } from '../lib/color';
+import { hsvHex, hsvToHex, textOn } from '../lib/color';
 import type { Hsv, PerKeyLed } from '../lib/types';
 import { Card } from '../components/Card';
 import { ColorRow } from '../components/ColorRow';
@@ -25,6 +25,84 @@ const PUSH_DELAY = 120;
 /** 本地动画帧间隔（约 30fps）。 */
 const ANIM_INTERVAL = 33;
 
+/** 灯位形状：键帽（按真实物理几何）/ 圆点（紧凑，一屏能看全）。 */
+type Shape = 'key' | 'dot';
+
+/**
+ * 键帽四角 → 屏幕多边形（已按 KLE 旋转规则处理）。
+ *
+ * KLE 的旋转是**绕基准点 (rx, ry) 转整个区块**，`r` 是顺时针角度（度），
+ * **不是绕键帽自己的中心** —— 算错会让旋角配列整片歪掉。
+ * 返回值已乘 `unit` 并加上原点偏移，可直接喂给 `ctx.lineTo`。
+ */
+/** 有限数兜底：任何 NaN / undefined 都会让 Canvas 整块画不出来。
+ *
+ *  后端加了 `w`/`h`/`r` 字段，但**旧服务进程**（没重启）返回的 LED 里
+ *  没有这些键 —— `undefined` 参与算术会得到 NaN，Canvas 收到 NaN 坐标
+ *  会**静默丢弃整个路径**，表现就是"灯全没了、画布空白"。
+ *  这里统一压成安全默认值，保证任何数据形态都能画出东西。
+ */
+function num(value: unknown, fallback: number): number {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+/** 键帽尺寸：宽键可能是 2.25U，退化时按 1×1 方块画。 */
+function ledSize(led: PerKeyLed): [number, number] {
+  return [Math.max(num(led.w, 1), 0.2), Math.max(num(led.h, 1), 0.2)];
+}
+
+/** 键帽四角 → 屏幕多边形（已按 KLE 旋转规则处理）。
+ *
+ * KLE 的旋转是**绕基准点 (rx, ry) 转整个区块**，`r` 是顺时针角度（度），
+ * **不是绕键帽自己的中心** —— 算错会让旋角配列整片歪掉。
+ * 返回值已乘 `unit` 并加上原点偏移，可直接喂给 `ctx.lineTo`。
+ */
+function keyPolygon(
+  led: PerKeyLed,
+  ox: number,
+  oy: number,
+  unit: number,
+): [number, number][] {
+  const [w, h] = ledSize(led);
+  const x = num(led.x, 0);
+  const y = num(led.y, 0);
+  const corners: [number, number][] = [
+    [x, y],
+    [x + w, y],
+    [x + w, y + h],
+    [x, y + h],
+  ];
+  const angle = num(led.r, 0);
+  const pts = angle
+    ? corners.map(([kx, ky]) => {
+        const a = (angle * Math.PI) / 180;
+        const ca = Math.cos(a);
+        const sa = Math.sin(a);
+        const bx = num(led.rx, 0);
+        const by = num(led.ry, 0);
+        const dx = kx - bx;
+        const dy = ky - by;
+        return [bx + dx * ca - dy * sa, by + dx * sa + dy * ca] as [number, number];
+      })
+    : corners;
+  return pts.map(([kx, ky]) => [ox + kx * unit, oy + ky * unit]);
+}
+
+/** 射线法：点是否在多边形内。 */
+function pointInPolygon(px: number, py: number, pts: [number, number][]): boolean {
+  let inside = false;
+  for (let i = 0, j = pts.length - 1; i < pts.length; j = i, i += 1) {
+    const [xi, yi] = pts[i];
+    const [xj, yj] = pts[j];
+    const cross = yi > py !== yj > py;
+    if (cross && px < ((xj - xi) * (py - yi)) / (yj - yi || 1e-9) + xi) {
+      inside = !inside;
+    }
+  }
+  return inside;
+}
+
 export function PerKeyPage() {
   const { snapshot } = useSession();
   const pk = snapshot?.perkey;
@@ -38,6 +116,7 @@ export function PerKeyPage() {
   const [colors, setColors] = useState<Hsv[]>([]);
   const [paint, setPaint] = useState<Hsv>([171, 255, 255]);
   const [anim, setAnim] = useState(false);
+  const [shape, setShape] = useState<Shape>('key');
 
   const painting = useRef(false);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -59,17 +138,31 @@ export function PerKeyPage() {
     if (light) setPaint([light.hue, light.sat, light.val]);
   }, [light?.hue, light?.sat, light?.val]);
 
+  // 画布范围：**必须按旋转后的外接框**算，否则带 r 的键会被画到视口外。
+  // 复用 keyPolygon(unit=1, 无偏移) 拿键盘单位下的角点，顺带把
+  // undefined/NaN 兜底收在一处 —— 这里一旦算出 NaN，下面整段会被跳过，
+  // 画布就全白。
   const geometry = useMemo(() => {
     if (!leds.length) return null;
-    const xs = leds.map((l) => l.x);
-    const ys = leds.map((l) => l.y);
-    const minX = Math.min(...xs);
-    const maxX = Math.max(...xs);
-    const minY = Math.min(...ys);
-    const maxY = Math.max(...ys);
-    const spanX = Math.max(maxX - minX, 1);
-    const spanY = Math.max(maxY - minY, 1);
-    return { minX, minY, spanX, spanY };
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+    leds.forEach((l) => {
+      keyPolygon(l, 0, 0, 1).forEach(([kx, ky]) => {
+        if (kx < minX) minX = kx;
+        if (kx > maxX) maxX = kx;
+        if (ky < minY) minY = ky;
+        if (ky > maxY) maxY = ky;
+      });
+    });
+    if (!isFinite(minX) || !isFinite(minY)) return null;
+    return {
+      minX,
+      minY,
+      spanX: Math.max(maxX - minX, 1),
+      spanY: Math.max(maxY - minY, 1),
+    };
   }, [leds]);
 
   // ---------------------------------------------------------------- 绘制
@@ -90,7 +183,17 @@ export function PerKeyPage() {
     ctx.clearRect(0, 0, width, height);
 
     if (!leds.length || !geometry) {
-      ctx.fillStyle = 'var(--text-3)';
+      // 注意：Canvas 的 fillStyle **不认 CSS 变量**（`var(--x)` 会被忽略，
+      // 静默不画）。要提示文字必须给具体颜色值。
+      ctx.fillStyle = '#7a8494';
+      ctx.font = '13px "Segoe UI", sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(
+        !leds.length ? '还没有 LED 灯位数据，点「从键盘读取」' : '灯位坐标异常，无法绘制',
+        width / 2,
+        height / 2,
+      );
       return;
     }
 
@@ -101,27 +204,72 @@ export function PerKeyPage() {
     const ox = (width - geometry.spanX * unit) / 2 - geometry.minX * unit;
     const oy = (height - geometry.spanY * unit) / 2 - geometry.minY * unit;
     layoutRef.current = { unit, ox, oy };
-    const size = Math.max(unit * 0.86, 5);
+    const gap = Math.max(unit * 0.07, 1);
+    // 字太小就别塞了 —— 留白比糊成一团好
+    const showLabel = unit > 17;
 
     leds.forEach((led) => {
       const color = colors[led.i] || [0, 0, 0];
-      const cx = ox + led.x * unit;
-      const cy = oy + led.y * unit;
       const fillc = color[2] ? hsvToHex(color[0], color[1], color[2]) : '#e8ecf1';
+      // ⚠️ Canvas 的 strokeStyle **不解析 CSS 变量**，写 `var(--x)` 会被
+      // 静默忽略（描边直接消失）。这里必须是具体色值。
+      // 深色主题下用浅描边，浅色主题下用深描边 —— 统一走 CSS 变量读出来。
+      const css = getComputedStyle(canvas);
       const outline = !led.writable
-        ? 'var(--readonly)'
+        ? css.getPropertyValue('--readonly').trim() || '#b9b9c0'
         : led.zone === 'key'
-          ? 'var(--key-border)'
-          : 'var(--accent-soft)';
+          ? css.getPropertyValue('--key-border').trim() || '#9aa0b5'
+          : css.getPropertyValue('--accent-soft').trim() || '#d9ebff';
+
+      if (shape === 'dot') {
+        // 圆形：直接用中心 + 半径，忽略 w/h
+        const [lw, lh] = ledSize(led);
+        const cx = ox + (num(led.x, 0) + lw / 2) * unit;
+        const cy = oy + (num(led.y, 0) + lh / 2) * unit;
+        ctx.beginPath();
+        ctx.arc(cx, cy, Math.max(unit * 0.43, 2.5), 0, Math.PI * 2);
+        ctx.fillStyle = fillc;
+        ctx.fill();
+        ctx.lineWidth = 1;
+        ctx.strokeStyle = outline;
+        ctx.stroke();
+        return;
+      }
+
+      // 键帽：按 KLE 物理几何画矩形，支持宽键与旋转
+      const pts = keyPolygon(led, ox, oy, unit);
+      // 旋转过的键帽是斜四边形，用「内缩到重心」的简化方式留缝：
+      // 沿每个角到重心的方向缩 gap，看起来就是均匀的键帽间隙。
+      const cx0 = pts.reduce((acc, p) => acc + p[0], 0) / 4;
+      const cy0 = pts.reduce((acc, p) => acc + p[1], 0) / 4;
+      const inner = pts.map(([px, py]) => {
+        const vx = px - cx0;
+        const vy = py - cy0;
+        const len = Math.hypot(vx, vy) || 1;
+        const shrink = Math.min(gap / len, 0.35);
+        return [px - vx * shrink, py - vy * shrink] as [number, number];
+      });
+
       ctx.beginPath();
-      ctx.arc(cx, cy, size / 2, 0, Math.PI * 2);
+      ctx.moveTo(inner[0][0], inner[0][1]);
+      for (let k = 1; k < inner.length; k += 1) ctx.lineTo(inner[k][0], inner[k][1]);
+      ctx.closePath();
       ctx.fillStyle = fillc;
       ctx.fill();
       ctx.lineWidth = 1;
       ctx.strokeStyle = outline;
       ctx.stroke();
+
+      if (showLabel && led.label) {
+        // 熄灭的键帽是浅灰底，必须用深字；点亮时按亮度自动黑白切换
+        ctx.fillStyle = color[2] ? textOn([color[0], color[1], color[2]]) : '#7a8494';
+        ctx.font = `${Math.max(7, unit * 0.2).toFixed(1)}px "Segoe UI", sans-serif`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(led.label, cx0, cy0);
+      }
     });
-  }, [leds, geometry, colors]);
+  }, [leds, geometry, colors, shape]);
 
   useEffect(() => {
     draw();
@@ -129,7 +277,17 @@ export function PerKeyPage() {
     if (!canvas) return;
     const observer = new ResizeObserver(() => draw());
     observer.observe(canvas);
-    return () => observer.disconnect();
+    // 主题切换只改 CSS 变量，组件不会重渲染 —— 必须主动侦测重绘，
+    // 否则描边色会停在旧主题上（深色主题配浅色描边，反之亦然）。
+    const mo = new MutationObserver(() => draw());
+    mo.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ['data-theme', 'class', 'style'],
+    });
+    return () => {
+      observer.disconnect();
+      mo.disconnect();
+    };
   }, [draw]);
 
   // ---------------------------------------------------------------- 提交
@@ -171,11 +329,38 @@ export function PerKeyPage() {
     const x = clientX - rect.left;
     const y = clientY - rect.top;
     const { unit, ox, oy } = layoutRef.current;
+
+    if (shape === 'key') {
+      // 键帽模式：点在**旋转后的四边形内**就算命中（宽键、旋角都准）。
+      // 逆序遍历，重叠时后画的（视觉在上层）优先。
+      for (let i = leds.length - 1; i >= 0; i -= 1) {
+        const led = leds[i];
+        const pts = keyPolygon(led, ox, oy, unit);
+        if (pointInPolygon(x, y, pts)) return led;
+      }
+      // 全部落空时退到「最近中心」，避免窄缝里点不中
+      let near: PerKeyLed | null = null;
+      let nearDist = (unit * 0.7) ** 2;
+      leds.forEach((led) => {
+        const pts = keyPolygon(led, ox, oy, unit);
+        const cx = pts.reduce((a, p) => a + p[0], 0) / 4;
+        const cy = pts.reduce((a, p) => a + p[1], 0) / 4;
+        const d = (x - cx) ** 2 + (y - cy) ** 2;
+        if (d < nearDist) {
+          near = led;
+          nearDist = d;
+        }
+      });
+      return near;
+    }
+
+    // 圆点模式：按中心距离（保持原行为）
     let best: PerKeyLed | null = null;
     let bestDist = (unit * 1.1) ** 2;
     leds.forEach((led) => {
-      const dx = x - (ox + led.x * unit);
-      const dy = y - (oy + led.y * unit);
+      const [lw, lh] = ledSize(led);
+      const dx = x - (ox + (num(led.x, 0) + lw / 2) * unit);
+      const dy = y - (oy + (num(led.y, 0) + lh / 2) * unit);
       const dist = dx * dx + dy * dy;
       if (dist < bestDist) {
         best = led;
@@ -262,15 +447,17 @@ export function PerKeyPage() {
 
     leds.forEach((led) => {
       if (!led.writable) return;
+      const lx = num(led.x, 0);
+      const ly = num(led.y, 0);
       let color: Hsv;
       if (name === '水平渐变') {
-        const t = (led.x - geometry.minX) / Math.max(geometry.spanX, 1);
+        const t = (lx - geometry.minX) / Math.max(geometry.spanX, 1);
         color = [Math.trunc(h + t * 120) % 256, s, v];
       } else if (name === '垂直渐变') {
-        const t = (led.y - geometry.minY) / Math.max(geometry.spanY, 1);
+        const t = (ly - geometry.minY) / Math.max(geometry.spanY, 1);
         color = [Math.trunc(h + t * 120) % 256, s, v];
       } else if (name === '彩虹') {
-        const t = (led.x - geometry.minX) / Math.max(geometry.spanX, 1);
+        const t = (lx - geometry.minX) / Math.max(geometry.spanX, 1);
         color = [Math.trunc(t * 255) % 256, 255, v];
       } else if (name === '波浪') {
         const t = led.i / Math.max(leds.length - 1, 1);
@@ -386,6 +573,16 @@ export function PerKeyPage() {
             ]}
             value={tool}
             onChange={setTool}
+          />
+          <span style={{ width: 1, height: 18, background: 'var(--border)' }} />
+          <span className="field-label">显示</span>
+          <Segmented<Shape>
+            items={[
+              { value: 'key', label: '键帽' },
+              { value: 'dot', label: '圆点' },
+            ]}
+            value={shape}
+            onChange={setShape}
           />
           <span style={{ width: 1, height: 18, background: 'var(--border)' }} />
           <span className="field-label">图案</span>

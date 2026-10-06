@@ -184,6 +184,22 @@ select:focus, input:focus { outline: none; border-color: var(--accent); }
 select:disabled, input:disabled { opacity: .45; }
 
 .hex-input { font-family: var(--font-mono); width: 92px; text-transform: lowercase; }
+.mono-input { font-family: var(--font-mono); width: 104px; }
+
+/* 当前颜色：色块 + hex/HSV/RGB 三栏直输 */
+.curcolor { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.curcolor-chip {
+  width: 34px; height: 26px; border-radius: 6px; flex: none;
+  border: 1px solid var(--border);
+  box-shadow: inset 0 0 0 1px rgba(0,0,0,.06);
+}
+.curcolor-field { display: inline-flex; align-items: center; gap: 6px; }
+.curcolor-field > span {
+  font-size: 11.5px; color: var(--text-3); min-width: 26px;
+  font-family: var(--font-mono);
+}
+.curcolor-field input:disabled { cursor: not-allowed; }
+
 select.effect-select { max-width: 100%; min-width: 300px; }
 
 label.field { display: flex; flex-direction: column; gap: 5px; font-size: 12.5px; color: var(--text-2); }
