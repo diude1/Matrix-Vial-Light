@@ -22,6 +22,7 @@ SSE 连接；每个订阅者拿到一个独立队列，满了就丢，绝不让�
 """
 
 import atexit
+import math
 import queue
 import threading
 import time
@@ -105,6 +106,10 @@ class DeviceSession(object):
         # (row, col) -> KLE 物理几何的缓存；换设备 / 重读配列后必须清空
         self._led_geom_cache = None
         self._led_geom_missing = 0
+        # 配件灯方阵几何 + 逐灯查表（供 _pick_geometry / _perkey_dict 用）
+        self._acc_geom_cache = None
+        self._rc_map = {}
+        self._led_by_global = {}
 
         # --- 配列 / 信息 ---
         self.layout = None
@@ -309,20 +314,158 @@ class DeviceSession(object):
 
         固件键位图（``DYNAMIC_KEYMAP_GET_KEYCODE``）的读数在
         :meth:`_read_key_labels` 里已带进 ``layout``，这里直接复用。
+
+        .. important::
+           **同一个 ``(row, col) 可能在KLE 里出现多次** —— 定义把
+           Caps 拆成 1.25u+1.75u 两块、把空格拆成 2.0u+2.75u 两块，
+           每块都标同一个 ``rc``。这时**必须用灯号再校验一次**：按面积取
+           最匹配的那块，否则会出现「键位跑到别的键下面」的错觉。
+
+           实测重复的 rc：``(0,10)`` ``(2,3)`` ``(4,1)`` ``(4,4)``
+           ``(4,7)`` ``(4,8)``。
         """
         if self._led_geom_cache is not None:
             return self._led_geom_cache
-        out = {}
+        #先收集所有候选（同一 rc 可能有多块）
+        cands = {}
         kle = (self.layout or {}).get("kle") or {}
         for k in kle.get("keys") or []:
             if k.get("row") is None or k.get("col") is None:
                 continue
-            out[(k["row"], k["col"])] = (
+            cands.setdefault((k["row"], k["col"]), []).append((
                 k["x"], k["y"], k["w"], k["h"],
                 k.get("r") or 0, k.get("rx") or 0, k.get("ry") or 0,
                 k.get("label") or "", k.get("keyname") or "",
-            )
+            ))
+        out = {}
+        for rc, items in cands.items():
+            out[rc] = self._pick_geometry(rc, items)
         self._led_geom_cache = out
+        return out
+
+    def _pick_geometry(self, rc, items):
+        """同一 ``rc`` 有多块几何时，**选出包含那颗 LED 的那一块**。
+
+        键盘定义的 ``layouts.keymap`` 是 20 个**拼贴区块**，同一个
+        ``(row, col)`` 会被重复描述多次 —— 实测 6 个 rc 有多块：
+        ``(0,10)`` ``(2,3)`` ``(4,1)`` ``(4,4)`` ``(4,7)`` ``(4,8)``。
+
+        **判据不是间隙，而是「固件里这个 rc 有几颗灯」** ——
+        实测真机 ``amk_leds()`` 里**每个 rc 都只有一颗 LED**（重复数= 0）。
+        所以一块 rc 对应多块几何时，**永远只能取一块**，合并必然画错。
+
+        怎么选：拿这颗 LED 在 ``amk_leds()`` 里的**矩阵行列坐标**
+        （那是固件给的电气位置），逐块测试它落在哪个矩形内。
+        唯一会命中多块的情况是 Caps 那种拆键
+        （``x=0.50 w=1.25`` + ``x=2.50 w=1.75``，LED 在 ``x=3,y=2``，
+        落在第二块里），此时取**离 LED 中心最近**的那块。
+
+        早期版本试过「按间隙合并」和「取面积最大」，都会出错：
+        前者把 ``rc=(0,10)`` 的键盘左右两区框成一个巨型方块压住 PgUp，
+        后者选中 2.75U 空格而压住 LAlt / V / B。
+
+        配件灯（18 颗灯条）``row/col`` 为 ``None``，本来就不在候选里——
+        它们走 :meth:`_perkey_dict` 的 ``acc_geom`` 分支，被画在键盘右侧。
+        """
+        if len(items) == 1:
+            return items[0]
+
+        # 拿这颗 rc 对应的 LED（固件给的电气坐标）
+        led = None
+        gidx = self._rc_map.get(rc)
+        if gidx is not None:
+            led = self._led_by_global.get(gidx)
+
+        if led is not None:
+            hits = []
+            for it in items:
+                x1, y1 = it[0], it[1]
+                x2, y2 = it[0] + it[2], it[1] + it[3]
+                if x1 - 0.01 <= led.x <= x2 + 0.01 and \
+                   y1 - 0.01 <= led.y <= y2 + 0.01:
+                    hits.append(it)
+            if len(hits) == 1:
+                return hits[0]
+            if hits:
+                # 落进多块（拆键）—— 取中心最近的那块
+                return min(hits, key=lambda it: abs(
+                    (it[0] + it[2] / 2.0) - led.x
+                ) + abs((it[1] + it[3] / 2.0) - led.y))
+
+        # 没有 LED 信息可依据：退而求其次，取面积最大的一块（宽键通常是主键）
+        return max(items, key=lambda it: it[2] * it[3])
+
+    @staticmethod
+    def _merge_rotated(items):
+        """带旋转的多块：按各自基准点旋转后取并集包围盒。"""
+        pts = []
+        label = ""
+        keyname = ""
+        for it in items:
+            x, y, w, h, r, rx, ry, lb, kn = it
+            if not label:
+                label, keyname = lb, kn
+            corners = ((x, y), (x + w, y), (x + w, y + h), (x, y + h))
+            a = (r * 3.141592653589793 / 180.0) if r else 0.0
+            ca, sa = (1.0, 0.0) if not r else (math.cos(a), math.sin(a))
+            for px, py in corners:
+                dx, dy = px - rx, py - ry
+                pts.append((rx + dx * ca - dy * sa, ry + dx * sa + dy * ca))
+        x1 = min(p[0] for p in pts)
+        y1 = min(p[1] for p in pts)
+        x2 = max(p[0] for p in pts)
+        y2 = max(p[1] for p in pts)
+        head = items[0]
+        return (x1, y1, x2 - x1, y2 - y1, head[4], head[5], head[6],
+                label, keyname)
+
+    def _acc_geometry(self):
+        """配件灯的几何：排成整齐的方阵，摆在**键盘右侧的空地**。
+
+        为什么必须单独摆：配件灯（18 颗灯条）``row/col`` 都是``None``，
+        早先的兜底逻辑把它们按矩阵行列摆位，结果正好压在键盘区上 ——
+        用户看到的就是「十几个无键名的方块糊住键盘」。
+
+        这里按「键盘外接框右边 + 留2U 间隙」起排，超出键盘高度就往下延伸，
+        保证**与键盘零重叠**。
+        """
+        if self._acc_geom_cache is not None:
+            return self._acc_geom_cache
+        out = {}
+        acc = [l for l in self.leds if getattr(l, "zone", None) == "acc"]
+        if not acc:
+            self._acc_geom_cache = out
+            return out
+
+        # 键盘外接框（只用有物理几何的轴灯算）
+        kle = (self.layout or {}).get("kle") or {}
+        kx1 = ky1 = float("inf")
+        kx2 = ky2 = float("-inf")
+        for k in kle.get("keys") or []:
+            x, y = k.get("x"), k.get("y")
+            if x is None or y is None:
+                continue
+            w = k.get("w") or 1.0
+            h = k.get("h") or 1.0
+            kx1 = min(kx1, x)
+            ky1 = min(ky1, y)
+            kx2 = max(kx2, x + w)
+            ky2 = max(ky2, y + h)
+        if kx1 == float("inf"):          # 没有键盘几何，退回一个默认值
+            kx1, ky1, kx2, ky2 = 0.0, 0.0, 16.0, 6.0
+
+        # 每行放几颗：按总高度算，尽量排成接近正方形的阵列
+        rows_avail = max(ky2 - ky1, 1.0)
+        per_row = max(1, min(6, int(rows_avail) or 1))
+        gap = 0.25
+        x0 = kx2 + 2.0
+        for i, led in enumerate(sorted(acc, key=lambda z: z.global_index)):
+            r, c = divmod(i, per_row)
+            # 与 _led_geometry_map 同样的 9 元组格式：x y w h r rx ry label keyname
+            out[led.global_index] = (
+                x0 + c * (1.0 + gap), ky1 + r * (1.0 + gap),
+                1.0, 1.0, 0.0, 0.0, 0.0, "", "")
+        self._acc_geom_cache = out
         return out
 
     def _perkey_dict(self):
@@ -330,19 +473,36 @@ class DeviceSession(object):
         if dev is None:
             return {"supported": False, "custom": False, "leds": [],
                     "colors": [], "known": [], "count": 0}
+        # ⚠️ 查表**必须在** _led_geometry_map() 之前建好 ——
+        # _pick_geometry() 靠它判断"同一 rc 的多块几何里哪块才是这颗灯"。
+        self._rc_map = {}
+        self._led_by_global = {}
+        for led in self.leds:
+            if led.row is not None and led.col is not None:
+                self._rc_map.setdefault((led.row, led.col), led.global_index)
+            self._led_by_global[led.global_index] = led
+
         geom = self._led_geometry_map()
+        acc_geom = self._acc_geometry()
         leds = []
         missing = 0
         for led in self.leds:
             g = None
             if led.row is not None and led.col is not None:
                 g = geom.get((led.row, led.col))
-            if g is None:
+            is_acc = getattr(led, "zone", None) == "acc"
+            if is_acc:
+                # 配件灯：**摆到键盘右侧**，绝不混进键盘几何 ——
+                # 它们的 row/col 是 None，兜底成矩阵行列会正好压在键盘上，
+                # 造成用户看到的「十几个方块糊住键盘」。
+                g = acc_geom.get(led.global_index)
+                if g is None:
+                    missing += 1
+            elif g is None:
                 missing += 1
             leds.append({
                 "i": led.index,
                 "g": led.global_index,
-                # 有物理几何就用它；没有就退回矩阵行列，别让灯凭空消失
                 "x": g[0] if g else led.x,
                 "y": g[1] if g else led.y,
                 "w": g[2] if g else 1.0,
@@ -518,6 +678,9 @@ class DeviceSession(object):
         self.perkey_custom = False
         self._led_geom_cache = None
         self._led_geom_missing = 0
+        self._acc_geom_cache = None
+        self._rc_map = {}
+        self._led_by_global = {}
         self.layout = None
 
     def _describe(self):

@@ -29,12 +29,12 @@ const ANIM_INTERVAL = 33;
 type Shape = 'key' | 'dot';
 
 /**
- * 键帽四角 → 屏幕多边形（已按 KLE 旋转规则处理）。
- *
- * KLE 的旋转是**绕基准点 (rx, ry) 转整个区块**，`r` 是顺时针角度（度），
- * **不是绕键帽自己的中心** —— 算错会让旋角配列整片歪掉。
- * 返回值已乘 `unit` 并加上原点偏移，可直接喂给 `ctx.lineTo`。
+ * 配件灯（灯条）的**全局灯号起点**，实测 Faukwaa = 75（0..73 是轴灯）。
+ * 用来给配件灯编「灯条 1..18」的序号；后端已把它们摆到键盘右侧，
+ * 不再压在键盘区上（见session.py 的 `_acc_geometry`）。
  */
+const ACC_LED_BASE = 75;
+
 /** 有限数兜底：任何 NaN / undefined 都会让 Canvas 整块画不出来。
  *
  *  后端加了 `w`/`h`/`r` 字段，但**旧服务进程**（没重启）返回的 LED 里
@@ -260,13 +260,21 @@ export function PerKeyPage() {
       ctx.strokeStyle = outline;
       ctx.stroke();
 
-      if (showLabel && led.label) {
+if (showLabel && led.label) {
         // 熄灭的键帽是浅灰底，必须用深字；点亮时按亮度自动黑白切换
         ctx.fillStyle = color[2] ? textOn([color[0], color[1], color[2]]) : '#7a8494';
         ctx.font = `${Math.max(7, unit * 0.2).toFixed(1)}px "Segoe UI", sans-serif`;
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
         ctx.fillText(led.label, cx0, cy0);
+      } else if (led.zone === 'acc') {
+        // 配件灯（灯条）没有键名，画「灯条 n」标出来，
+        // 否则右侧就是一片无意义的方块
+        ctx.fillStyle = color[2] ? textOn([color[0], color[1], color[2]]) : '#7a8494';
+        ctx.font = `${Math.max(6, unit * 0.16).toFixed(1)}px "Segoe UI", sans-serif`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(`灯条 ${led.g - ACC_LED_BASE + 1}`, cx0, cy0);
       }
     });
   }, [leds, geometry, colors, shape]);
