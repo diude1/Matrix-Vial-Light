@@ -78,6 +78,11 @@ python main.py
 （不想自动打开就加 `--no-browser`）。这个命令行窗口要一直开着，
 关掉它服务就停了；`Ctrl+C` 结束。
 
+> **重复启动不会开第二个服务**：先探 8765 上的 `/api/ping`，确认是本程序
+> 就直接打开那个页面然后退出 —— 所以不会出现「8765 一个、8766 一个」
+> 不知道该看哪个的局面。同时**浏览器一定是在端口绑定成功之后才打开的**，
+> 打开就是能用的页面。
+
 要求：Python 3.6+，**仅此而已** —— 界面依赖的 Flask 已随程序放在 `vendor/`
 目录里，不需要 `pip install`，也不需要联网。
 `run.bat` 会按 `py -3` → `python` → 常见安装目录 的顺序，
@@ -109,6 +114,9 @@ python -m pip install --user hidapi
 > 前端构建产物已入库，**不需要 Node / npm**。
 > 只有改前端源码时才需要（见 `frontend/`，`npm install` + `npm run build`，
 > 产物直接输出到 `vial_light/webapp/static/`）。
+
+> 想给**没装 Python** 的机器用？跑一次 `build_exe.bat`，产物是单文件
+> `dist\vial-matrix-light.exe`，双击即用。见第 10 节。
 
 ---
 
@@ -527,7 +535,8 @@ python mvl.py strips-restore bk.json        :: 从备份原样写回
 | 界面起不来 | 看 `run.log`（run.bat 会把所有输出写进去）；或先用 `mvl.py` |
 | `run.bat` 说「No usable Python was found」 | 机器上没装 Python 3，或没加进 PATH。装一个 python.org 版并勾选「Add Python to PATH」，**不用装任何依赖** |
 | 提示「无法加载 Web 界面依赖」 | `vendor/` 目录缺失或损坏了。确认里面有 6 个子目录（flask / werkzeug / jinja2 / click / itsdangerous / markupsafe），或临时 `pip install "flask>=1.1,<2"` |
-| 端口被占 / 开了多个实例 | 服务会从 8765 起自动找空闲端口，实际地址以窗口和 `run.log` 里打印的为准 |
+| 端口被占 / 开了多个实例 | **不会再起第二个实例**：启动时先请求 `8765` 的 `/api/ping`，确认是本程序就直接打开它并退出（日志里会写「检测到已有实例」）。只有 8765 被**别的程序**占用时才顺延，窗口和 `run.log` 会写明「已顺延到 8766」 |
+| 浏览器打开后一直转圈 | 先看窗口里的地址、再翻同目录的 `run.log`（现在**启动全过程**都记在里面）。新版是**端口绑定成功之后**才开浏览器，所以地址一定有服务在听；若仍转圈，多半是那个标签页指向的实例已经被关掉了 —— 重新双击一次即可（会自动复用或新起一个） |
 | 改了灯但重启后还原 | 固件没保存。点「保存到固件」；AMK 通常是即改即存 |
 | **配件灯只有 1–2 档灯效有效，其余没反应** | **这是正常的固件限制，不是 bug。** 本机固件没实现灯条级参数通道（`SET_RGB_PARAM` 回 `0x55`），非自定义档的画面完全由固件自己渲染、无法再改颜色；而本机的效果表与官方源码顺序不保证一致。**要完全可控就用「0 自定义（逐灯上色）」档。** |
 | **静态档下选颜色 / 亮度没用** | 因为静态档不是自定义档 —— 切到「0 自定义」再改色即可（在分区页点「推送配件灯」会自动切）。 |
@@ -536,6 +545,7 @@ python mvl.py strips-restore bk.json        :: 从备份原样写回
 | **按下 RGB_TOG 后像「轴灯 / 配件灯二选一」** | 轴灯在这个固件上**软件关不掉**（`0x81=0`、`(46)=0` 都被改成 1，`0x80` 写被忽略）。所以「有一边黑」只可能是**配件灯本来就暗**（出厂如此）。两者是**完全独立**的两个通道，实测互不干扰；把配件灯点亮后即可两边同时亮。 |
 | 物理配列和官网不一样 | 旋转已实现，但该定义前后两半坐标系不同、尚未缝合。对照灯光请切「矩阵网格」 |
 | 调了「关闭」灯效又亮起来 | AMK 的 `0x81` 不接受 0（会被改成 1）。轴灯要黑屏只能靠固件开关（软件无法镜像）；配件灯可逐颗 `on=0` |
+| **方案（灯光预设）忽然不见了** | 现在有两道保险：① 每天首次启动会在 `%APPDATA%\vial-matrix-light\` 留一份 `presets-YYYYMMDD.json` 快照（保留最近 7 份）；② 内存里读到空库时**拒绝**把空库写回磁盘。真的丢了，把快照复制成 `presets.json` 即可 |
 
 ---
 
@@ -584,6 +594,8 @@ python mvl.py strips-restore bk.json        :: 从备份原样写回
 ```
 vial-matrix-light/
 ├── run.bat                 一键启动（自动挑 Python，日志写 run.log）
+├── build_exe.bat           打包成单文件 exe（产物在 dist\，含自检）
+├── vial-matrix-light.spec  PyInstaller 配置（数据目录、排除项、入口）
 ├── install.bat             可选：安装 hidapi
 ├── main.py                 入口（--selftest 自检，含全局异常兜底）
 ├── mvl.py                  命令行入口
@@ -654,3 +666,50 @@ vial-matrix-light/
 `SET_RGB_PARAM(62)` 被固件拒绝（回 `0x55`）、`GET_RGB_STRIP_INFO(28)` 的
 偏移是 `[3]=index [4]=config [5]=start [6]=count`、mode 必须另用
 `GET_RGB_STRIP_MODE(31)` 的 `byte[4]` 读。
+
+---
+
+## 10. 打包成 exe
+
+给**没装 Python** 的机器用：
+
+```bat
+build_exe.bat
+```
+
+产物：`dist\vial-matrix-light.exe`（单文件，约 8 MB）。双击即用 ——
+目标机器不需要 Python、不需要 pip、不需要 Node/联网。窗口开着服务就在，
+关掉就停（和 `run.bat` 一样）。
+
+脚本最后会自动跑一次 `--selftest`（首页 + 9 个 API + SSE 首帧 + 静态资源 +
+方案库），**不通过就直接报错**，不会给你一个看着能跑其实是白屏的 exe。
+
+### 构建细节
+
+| 事项 | 做法 |
+|---|---|
+| PyInstaller 装在哪 | `.build\py36\`（`pip install --target` 隔离安装），**不碰系统环境** |
+| 中间产物 / 成品 | `build\` / `dist\`，都已进 `.gitignore` |
+| 用哪个解释器 | 依次试 `py -3.6`…`3.10` → `python` → 常见安装目录，只接受**能 import `vendor\flask` 且版本在 3.6–3.10** 的那个 |
+| Flask 从哪来 | **`vendor/` 那份**，不是构建机的 site-packages —— spec 里把 `vendor` 排在 `pathex` 最前，保证 exe 与源码跑的是同一份代码 |
+| 资源怎么带 | `vendor/` 与 `vial_light/webapp/static/` 以**数据**形式进包，运行时解压到 `%TEMP%\_MEIxxxx` |
+| 路径怎么找 | `main.py` 新加了 `_res_dir()`（资源，frozen 下是 `sys._MEIPASS`）和 `_data_dir()`（可写，frozen 下是 exe 所在目录） |
+| `run.log` 写哪 | **exe 旁边**，不是临时目录（临时目录退出即删，崩溃日志会跟着没） |
+| 启动时序 | 先用 `make_server` 把端口**真绑上**，绑成功之后才开浏览器。旧流程是「`_free_port()` 探一下 → close → 交给 Flask 再 bind → 0.6 秒盲开浏览器」，中间有竞态，也正是「浏览器打开 8766 却一直转圈」的成因 |
+| 重复启动 | 先探 `8765` 的 `/api/ping`，确认是本程序就**打开已有实例并退出**，不再占 8766；只有 `--port` 显式指定时才允许并存 |
+| 日志 | 启动全过程（Python 版本、程序/资源路径、端口、复用判定、失败原因）都写进 `run.log`，不只记崩溃 |
+
+### 已知取舍
+
+- **只有 Web 界面进了 exe**（入口是 `main.py`）。`mvl.py` 那些命令行子命令
+  仍是源码用法；要单独一个 `mvl.exe`，把 spec 里的入口换成 `mvl.py`
+  另存一份 spec 即可。
+- **onefile 每次启动都要解压**到临时目录，首次约 1–3 秒；想要秒开可以改成
+  onedir（spec 里用 `COLLECT` 代替把 `a.binaries` 塞进 `EXE`），代价是产物变成
+  一个目录而不是单个文件。
+- **保留控制台**（`console=True`）：窗口里要打印服务地址，出错也得看得见。
+  改成 `console=False` 就是无窗口程序，但出错时只剩 `run.log` 可查。
+- **杀软可能误报**：PyInstaller onefile 的典型误报（没有签名）。加白名单即可，
+  或改用 onedir 降低误报率。
+- 换了前端（`npm run build`）之后要**重新打包**，静态资源是拷进去的，
+  不会自动更新。

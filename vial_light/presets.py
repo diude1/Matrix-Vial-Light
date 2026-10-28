@@ -153,9 +153,48 @@ class PresetStore(object):
         self.path = path or config_path()
         self.presets = []
         self.error = None
+        self._daily_snapshot()
         self.load()
 
     # ---- 磁盘 ----------------------------------------------------------
+    def _daily_snapshot(self):
+        """每天第一次启动时留一份快照（``presets-YYYYMMDD.json``，保留 7 份）。
+
+        纯保险：方案库是用户手调出来的东西，重建成本很高。万一某个版本
+        把库写空了，至少还能从当天的快照里捞回来。
+        """
+        if not os.path.exists(self.path):
+            return
+        folder = os.path.dirname(self.path) or "."
+        dst = os.path.join(folder, "presets-%s.json" % time.strftime("%Y%m%d"))
+        if os.path.exists(dst):
+            return
+        try:
+            shutil.copy2(self.path, dst)
+        except Exception:
+            return
+        try:                                    # 只保留最近 7 份
+            names = sorted(n for n in os.listdir(folder)
+                           if n.startswith("presets-")
+                           and n.endswith(".json") and len(n) == len("presets-YYYYMMDD.json"))
+            for old in names[:-7]:
+                os.remove(os.path.join(folder, old))
+        except Exception:
+            pass
+
+    def _disk_count(self):
+        """磁盘上现有多少条方案（读不动就当 0）。"""
+        try:
+            with open(self.path, "r", encoding="utf-8") as fh:
+                raw = json.load(fh)
+        except Exception:
+            return 0
+        if isinstance(raw, list):
+            return len(raw)
+        if isinstance(raw, dict):
+            return len(raw.get("presets") or [])
+        return 0
+
     def load(self):
         self.presets = []
         self.error = None
@@ -167,6 +206,12 @@ class PresetStore(object):
         except Exception as exc:
             # 文件坏了不能让程序起不来 —— 记下原因，当作空库
             self.error = "方案文件无法解析（%s），已按空库载入" % exc
+            # 坏文件另存一份，别让下一次 save() 把它彻底冲掉
+            try:
+                shutil.copy2(self.path,
+                             self.path + ".corrupt-" + time.strftime("%Y%m%d%H%M%S"))
+            except Exception:
+                pass
             return
         if isinstance(raw, list):
             raw = {"presets": raw}          # 兼容最早期只有数组的形态
@@ -178,8 +223,19 @@ class PresetStore(object):
             if p is not None:
                 self.presets.append(p)
 
-    def save(self):
-        """原子写入，失败返回 (False, 原因)。"""
+    def save(self, allow_empty=False):
+        """原子写入，失败返回 ``(False, 原因)``。
+
+        ``allow_empty`` 只给 ``remove()`` 用 —— 用户真的删掉最后一条时得让他删。
+        其它任何路径想把**空库**写回磁盘都会被拦下：内存空、磁盘上却有方案，
+        说明这次加载出了问题（文件正被别的进程替换、解析异常……），
+        照着内存覆盖磁盘就是把用户的方案全清了。
+        """
+        if not self.presets and not allow_empty:
+            existing = self._disk_count()
+            if existing > 0:
+                return False, ("内存中的方案库为空，但磁盘上仍有 %d 条方案，"
+                               "已拒绝覆盖" % existing)
         payload = {"version": SCHEMA_VERSION,
                    "presets": [p.as_dict() for p in self.presets]}
         try:
@@ -285,7 +341,8 @@ class PresetStore(object):
         if idx < 0:
             return False, "没有找到方案「%s」" % name
         gone = self.presets.pop(idx)
-        ok, err = self.save()
+        # 用户真的可以删到一条不剩 —— 这条路径明确允许空库写盘
+        ok, err = self.save(allow_empty=True)
         if not ok:
             self.presets.insert(idx, gone)   # 回滚
             return False, "写入失败：%s" % err

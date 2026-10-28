@@ -18,16 +18,34 @@
 import os
 import socket
 import sys
-import threading
 import traceback
 import webbrowser
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+def _res_dir():
+    """**资源**目录：源码运行时是项目根，打包成 exe 后是 PyInstaller 的解压目录。
+
+    onefile 模式下这个目录是临时目录，**只读、退出即删** —— 不能往里写任何东西。
+    ``vendor/`` 与 ``vial_light/webapp/static/`` 都在这里，PyInstaller 会原样带过去。
+    """
+    if getattr(sys, "frozen", False):
+        return getattr(sys, "_MEIPASS",
+                       os.path.dirname(os.path.abspath(sys.executable)))
+    return os.path.dirname(os.path.abspath(__file__))
+
+
+def _data_dir():
+    """**可写**目录：源码运行时是项目根，打包后是 exe 所在目录（日志要留得住）。"""
+    if getattr(sys, "frozen", False):
+        return os.path.dirname(os.path.abspath(sys.executable))
+    return os.path.dirname(os.path.abspath(__file__))
+
+
+sys.path.insert(0, _res_dir())
 
 #: 随程序打包的第三方依赖（Flask 及其纯 Python 依赖）。
 #: 放在仓库根，且插到 ``sys.path`` 最前面 —— 这样即使系统里装过别的版本，
 #: 也一定用这份自带的；机器上完全没装 Flask 也能直接跑。
-_VENDOR_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "vendor")
+_VENDOR_DIR = os.path.join(_res_dir(), "vendor")
 if os.path.isdir(_VENDOR_DIR):
     sys.path.insert(0, _VENDOR_DIR)
 
@@ -78,7 +96,7 @@ def _report_fatal(exc):
         sys.stderr.write(text)
     except Exception:
         pass
-    log_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "run.log")
+    log_path = os.path.join(_data_dir(), "run.log")
     try:
         with open(log_path, "a", encoding="utf-8") as fp:
             fp.write("\n===== FATAL ERROR =====\n")
@@ -88,28 +106,120 @@ def _report_fatal(exc):
     return text
 
 
-def _free_port(start=DEFAULT_PORT):
-    """从 ``start`` 起找一个能绑上的端口（只探本机回环）。
+def _port_free(port):
+    """精确判断 ``127.0.0.1:port`` 能不能独占绑定。
 
     这里**不能**设 ``SO_REUSEADDR``：Windows 对它的语义和 Linux 不同，
     它允许同一个端口被重复绑定（不检查冲突），设了之后 bind 永远成功，
-    顺延探测就彻底失效了，服务会静默撞到已被占用的端口上。
+    顺延探测就彻底失效了，服务会静默撞到已被占用的端口上 —— 表现就是
+    「控制台说 8766，浏览器却一直转圈」。
+
+    Windows 上还额外打开 ``SO_EXCLUSIVEADDRUSE``：它能连「别的进程绑在
+    ``0.0.0.0``」这种隐性占用一起挡住，比裸 bind 更严格。
     """
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        exclusive = getattr(socket, "SO_EXCLUSIVEADDRUSE", None)
+        if exclusive is not None:
+            try:
+                sock.setsockopt(socket.SOL_SOCKET, exclusive, 1)
+            except OSError:
+                pass
+        sock.bind(("127.0.0.1", port))
+        return True
+    except OSError:
+        return False
+    finally:
+        sock.close()
+
+
+def _bind_server(app, start=DEFAULT_PORT):
+    """真正把服务绑到端口上，返回 ``(server, port)``；全被占则抛最后一个异常。
+
+    与 ``app.run()`` 的区别：**绑定是显式、可失败的**。绑成功之后才去开浏览器，
+    所以「浏览器打开的地址」一定有服务在听 —— 旧写法是 ``_free_port()`` 探完就
+    close，再由 Flask 重新 bind，中间既有竞态又无法在失败时收回浏览器。
+    """
+    from werkzeug.serving import make_server
+
+    last = None
     for port in range(start, start + PORT_TRIES):
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        try:
-            sock.bind(("127.0.0.1", port))
-            return port
-        except OSError:
+        if not _port_free(port):
+            last = OSError("端口 %d 已被占用" % port)
             continue
-        finally:
-            sock.close()
-    return start
+        try:
+            return make_server("127.0.0.1", port, app, threaded=True), port
+        except OSError as exc:                     # 探测和 bind 之间被抢走
+            last = exc
+            continue
+    raise last or OSError("没有可用端口")
+
+
+def _probe_instance(port, timeout=0.35):
+    """判断 ``port`` 上是不是**已经在跑的本程序**（只认 ``/api/ping`` 自报的标识）。
+
+    别的程序占了 8765 也不会被误认成自己 —— 它得同时是 200、是 JSON、
+    且 ``data.app == "vial-matrix-light"``。
+    """
+    try:
+        import json as _json
+        import urllib.request
+
+        with urllib.request.urlopen("http://127.0.0.1:%d/api/ping" % port,
+                                    timeout=timeout) as resp:
+            payload = _json.loads(resp.read().decode("utf-8", "replace"))
+    except Exception:
+        return False
+    data = payload.get("data") if isinstance(payload, dict) else None
+    return bool(payload.get("ok") and isinstance(data, dict)
+                and data.get("app") == "vial-matrix-light")
+
+
+def _open_browser(url):
+    """开浏览器（失败不影响服务本身）。"""
+    try:
+        webbrowser.open(url)
+    except Exception:
+        pass
+
+
+def _log(message):
+    """同时写到控制台和 exe 旁边的 run.log —— 双击场景只看得到其中一个。"""
+    text = message if message.endswith("\n") else message + "\n"
+    try:
+        sys.stdout.write(text)
+        sys.stdout.flush()
+    except Exception:
+        pass
+    try:
+        path = os.path.join(_data_dir(), "run.log")
+        with open(path, "a", encoding="utf-8") as fp:
+            fp.write(text)
+    except Exception:
+        pass
+
+
+def _reset_log():
+    """每次启动重写 run.log，避免上一次的记录混进来误导排查。"""
+    try:
+        with open(os.path.join(_data_dir(), "run.log"), "w",
+                  encoding="utf-8") as fp:
+            fp.write("")
+    except Exception:
+        pass
+
+
+def _hold_console():
+    """启动失败时别让控制台窗口一闪而过（只在交互式终端里等回车）。"""
+    try:
+        if sys.stdin is not None and sys.stdin.isatty():
+            input("\n按回车键退出…")
+    except Exception:
+        pass
 
 
 def _static_dir():
-    return os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                        "vial_light", "webapp", "static")
+    return os.path.join(_res_dir(), "vial_light", "webapp", "static")
 
 
 def run_selftest():
@@ -152,7 +262,7 @@ def run_selftest():
 
     for path in ("/api/state", "/api/devices", "/api/info", "/api/logs",
                  "/api/layout", "/api/leds", "/api/effects", "/api/strips",
-                 "/api/presets"):
+                 "/api/presets", "/api/ping"):
         resp = client.get(path)
         payload = resp.get_json(silent=True)
         good = resp.status_code == 200 and isinstance(payload, dict) \
@@ -193,7 +303,8 @@ def main():
         return run_selftest()
 
     port = DEFAULT_PORT
-    if "--port" in argv:
+    explicit_port = "--port" in argv
+    if explicit_port:
         try:
             port = int(argv[argv.index("--port") + 1])
         except (IndexError, ValueError):
@@ -201,10 +312,29 @@ def main():
             return 2
     no_browser = "--no-browser" in argv
 
+    # 已经有本程序在跑就**直接用它**，不再起第二个 —— 否则会出现
+    # 「8765 一个、8766 一个」两个页面，用户不知道该看哪个。
+    #
+    # 这一步刻意放在写日志之前：命中时只往 run.log 追加一行，
+    # 不能把**正在运行的那个实例**的日志清掉。
+    if not explicit_port and _probe_instance(port):
+        url = "http://127.0.0.1:%d/" % port
+        _log("检测到已有实例在运行：%s" % url)
+        _log("直接打开它，本次不再启动新服务。这里可以直接关掉这个窗口。")
+        if not no_browser:
+            _open_browser(url)
+        return 0
+
+    _reset_log()
+    _log("vial-matrix-light 启动中…（Python %s）"
+         % ".".join(str(n) for n in sys.version_info[:3]))
+    _log("  程序位置: %s" % _data_dir())
+    _log("  资源位置: %s" % _res_dir())
+
     try:
         from vial_light.webapp.server import create_app
     except ImportError as exc:
-        sys.stderr.write(
+        _log(
             "无法加载 Web 界面依赖: %s\n"
             "界面需要的 Flask 本应在 vendor/ 目录随程序提供，这里没找到。\n"
             "请确认 vendor/ 目录完整（flask/ werkzeug/ jinja2/ click/ "
@@ -212,41 +342,60 @@ def main():
             "或手动安装一份: pip install \"flask>=1.1,<2\"\n"
             "也可以用命令行模式: python mvl.py --help\n" % exc
         )
+        _hold_console()
         return 2
     except Exception as exc:
         _report_fatal(exc)
+        _hold_console()
         return 3
 
     try:
         app = create_app()
     except Exception as exc:
         _report_fatal(exc)
+        _hold_console()
         return 4
 
-    port = _free_port(port)
+    if _probe_instance(port):
+        url = "http://127.0.0.1:%d/" % port
+        _log("检测到已有实例在运行：%s" % url)
+        if not no_browser:
+            _open_browser(url)
+        return 0
+
+    # 先把端口握住，再开浏览器 —— 保证浏览器打开的地址一定有服务在听
+    try:
+        server, port = _bind_server(app, port)
+    except OSError as exc:
+        _log("启动失败：127.0.0.1:%d-%d 全被占用（%s）"
+             % (port, port + PORT_TRIES - 1, exc))
+        _log("关掉占用这些端口的程序后重试，或换一个端口："
+             "vial-matrix-light.exe --port 9000")
+        _hold_console()
+        return 6
+
     url = "http://127.0.0.1:%d/" % port
-    print("vial-matrix-light 已启动：%s" % url)
-    print("按 Ctrl+C 结束。")
-    sys.stdout.flush()
+    _log("vial-matrix-light 已启动：%s" % url)
+    if port != DEFAULT_PORT and not explicit_port:
+        _log("  （默认端口 %d 被别的程序占用，已顺延到 %d）"
+             % (DEFAULT_PORT, port))
+    _log("按 Ctrl+C 结束；关掉这个窗口服务就会停。")
 
     if not no_browser:
-        def _open():
-            try:
-                webbrowser.open(url)
-            except Exception:
-                pass
-
-        threading.Timer(0.6, _open).start()
+        _open_browser(url)
 
     try:
-        app.run(host="127.0.0.1", port=port, threaded=True, use_reloader=False,
-                debug=False)
+        server.serve_forever()
     except KeyboardInterrupt:
         pass
     except Exception as exc:
         _report_fatal(exc)
         return 5
     finally:
+        try:
+            server.server_close()
+        except Exception:
+            pass
         try:
             app.config["vial_session"].close()
         except Exception:
@@ -255,4 +404,11 @@ def main():
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    try:
+        sys.exit(main())
+    except SystemExit:
+        raise
+    except BaseException as _exc:            # 兜底：双击场景窗口别一闪而过
+        _report_fatal(_exc)
+        _hold_console()
+        sys.exit(9)

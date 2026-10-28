@@ -93,6 +93,17 @@ def create_app(session=None):
     def favicon():
         return ("", 204)
 
+    @app.route("/api/ping")
+    def ping():
+        """轻量身份标识：给「启动前探测是否已有实例」用。
+
+        刻意不碰设备、不加锁 —— 它是被**另一个进程**在启动时高频探测的，
+        不能因为设备忙就挂住，否则探测方会误判成「端口没人」。
+        """
+        return jsonify({"ok": True,
+                        "data": {"app": "vial-matrix-light",
+                                 "pid": os.getpid()}})
+
     # ------------------------------------------------------------ 设备管理
     @app.route("/api/devices")
     @api
